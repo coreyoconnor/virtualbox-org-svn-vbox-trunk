@@ -1006,7 +1006,8 @@ void UIKeyboardHandler::darwinGrabKeyboardEvents(bool fGrab)
         UICocoaApplication::instance()->registerForNativeEvents(RT_BIT_32(10) | RT_BIT_32(11) | RT_BIT_32(12) /* NSKeyDown  | NSKeyUp | | NSFlagsChanged */,
                                                                 UIKeyboardHandler::darwinEventHandlerProc, this);
 
-        ::DarwinGrabKeyboard (false);
+        // Issue 5684 - Do not grab the global hotkeys
+        ::DarwinGrabKeyboard (true);
     }
     else
     {
@@ -1024,8 +1025,12 @@ bool UIKeyboardHandler::darwinEventHandlerProc(const void *pvCocoaEvent, const v
 
     /* Check if this is an application key combo. In that case we will not pass
      * the event to the guest, but let the host process it. */
-    if (::darwinIsApplicationCommand(pvCocoaEvent))
-        return false;
+    // Issue 5684 - Do not filter out any keys from propogating to the guest.
+    // curiously, the accessors used in darwinIsApplicationCommand have side effects 
+    // that must occur for the event to be processed. 
+    // So we have to call the function but ignore the result.
+    // XXX: Pull out the NSEvent message that has the side effect to this function.
+    ::darwinIsApplicationCommand(pvCocoaEvent);
 
     /* All keyboard class events needs to be handled. */
     if (eventClass == kEventClassKeyboard)
