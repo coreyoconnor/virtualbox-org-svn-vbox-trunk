@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -1244,6 +1244,21 @@ int UIMessageCenter::cannotEnterSeamlessMode()
              QIMessageBox::Ok | QIMessageBox::Default);
 }
 
+int UIMessageCenter::confirmMachineItemRemoval(const QStringList &names)
+{
+    return message(&vboxGlobal().selectorWnd(),
+                   Question,
+                   tr("<p>You are about to remove following virtual "
+                      "machine items from the machine list:</p>"
+                      "<p><b>%1</b></p>"
+                      "<p>Do you wish to proceed?</p>").arg(names.join(", ")),
+                   0, /* auto-confirm id */
+                   QIMessageBox::Ok,
+                   QIMessageBox::Cancel | QIMessageBox::Escape | QIMessageBox::Default,
+                   0,
+                   tr("Remove"));
+}
+
 int UIMessageCenter::confirmMachineDeletion(const QList<CMachine> &machines)
 {
     /* Enumerate VMs: */
@@ -2364,7 +2379,8 @@ void UIMessageCenter::cannotImportAppliance(CAppliance *pAppliance,
         message(pParent ? pParent : mainWindowShown(),
                 Error,
                 tr("Failed to open appliance."));
-    }else
+    }
+    else
     {
         /* Preserve the current error info before calling the object again */
         COMResult res(*pAppliance);
@@ -2439,7 +2455,8 @@ void UIMessageCenter::cannotExportAppliance(CAppliance *pAppliance,
         message(pParent ? pParent : mainWindowShown(),
                 Error,
                 tr("Failed to create appliance."));
-    }else
+    }
+    else
     {
         /* Preserve the current error info before calling the object again */
         COMResult res(*pAppliance);
@@ -2461,7 +2478,8 @@ void UIMessageCenter::cannotExportAppliance(const CMachine &machine,
         message(pParent ? pParent : mainWindowShown(),
                 Error,
                 tr("Failed to create an appliance."));
-    }else
+    }
+    else
     {
         message(pParent ? pParent : mainWindowShown(),
                 Error,

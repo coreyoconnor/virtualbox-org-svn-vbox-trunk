@@ -912,7 +912,7 @@ static uint32_t calc_line_width(uint16_t bpp, uint32_t pitch)
 }
 #endif
 
-static void recaltulate_data(VGAState *s, bool fVirtHeightOnly)
+static void recalculate_data(VGAState *s, bool fVirtHeightOnly)
 {
     uint16_t cBPP        = s->vbe_regs[VBE_DISPI_INDEX_BPP];
     uint16_t cVirtWidth  = s->vbe_regs[VBE_DISPI_INDEX_VIRT_WIDTH];
@@ -1168,7 +1168,7 @@ static int vbe_ioport_write_data(void *opaque, uint32_t addr, uint32_t val)
         }
         if (fRecalculate)
         {
-            recaltulate_data(s, false);
+            recalculate_data(s, false);
         }
     }
     return VINF_SUCCESS;
@@ -2466,7 +2466,7 @@ static int vga_load(QEMUFile *f, void *opaque, int version_id)
     for(i = 0; i < VBE_DISPI_INDEX_NB_SAVED; i++)
         qemu_get_be16s(f, &s->vbe_regs[i]);
     if (version_id <= VGA_SAVEDSTATE_VERSION_INV_VHEIGHT)
-        recaltulate_data(s, false); /* <- re-calculate the s->vbe_regs[VBE_DISPI_INDEX_VIRT_HEIGHT] since it might be invalid */
+        recalculate_data(s, false); /* <- re-calculate the s->vbe_regs[VBE_DISPI_INDEX_VIRT_HEIGHT] since it might be invalid */
     qemu_get_be32s(f, &s->vbe_start_addr);
     qemu_get_be32s(f, &s->vbe_line_offset);
     if (version_id < 2)
@@ -3065,7 +3065,7 @@ static int vgaInternalMMIOFill(PVGASTATE pThis, void *pvUser, RTGCPHYS GCPhysAdd
             }
     } else if (pThis->gr[5] & 0x10) {
         /* odd/even mode (aka text mode mapping) */
-        VERIFY_VRAM_WRITE_OFF_RETURN(pThis, GCPhysAddr * 2 + cItems * cbItem - 1);
+        VERIFY_VRAM_WRITE_OFF_RETURN(pThis, (GCPhysAddr + cItems * cbItem) * 4 - 1);
         while (cItems-- > 0)
             for (i = 0; i < cbItem; i++)
             {
@@ -3079,7 +3079,7 @@ static int vgaInternalMMIOFill(PVGASTATE pThis, void *pvUser, RTGCPHYS GCPhysAdd
             }
     } else {
         /* standard VGA latched access */
-        VERIFY_VRAM_WRITE_OFF_RETURN(pThis, GCPhysAddr + cItems * cbItem - 1);
+        VERIFY_VRAM_WRITE_OFF_RETURN(pThis, (GCPhysAddr + cItems * cbItem) * 4 - 1);
 
         switch(pThis->gr[5] & 3) {
         default:
@@ -6175,7 +6175,8 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
 
     AssertReleaseMsg(g_cbVgaBiosBinary <= _64K && g_cbVgaBiosBinary >= 32*_1K, ("g_cbVgaBiosBinary=%#x\n", g_cbVgaBiosBinary));
     AssertReleaseMsg(RT_ALIGN_Z(g_cbVgaBiosBinary, PAGE_SIZE) == g_cbVgaBiosBinary, ("g_cbVgaBiosBinary=%#x\n", g_cbVgaBiosBinary));
-    rc = PDMDevHlpROMRegister(pDevIns, 0x000c0000, cbVgaBiosBinary, pu8VgaBiosBinary, cbVgaBiosBinary,
+    /* Note! Because of old saved states we'll always register at least 36KB of ROM. */
+    rc = PDMDevHlpROMRegister(pDevIns, 0x000c0000, RT_MAX(cbVgaBiosBinary, 36*_1K), pu8VgaBiosBinary, cbVgaBiosBinary,
                               fFlags, "VGA BIOS");
     if (RT_FAILURE(rc))
         return rc;

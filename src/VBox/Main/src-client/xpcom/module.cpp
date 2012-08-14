@@ -36,7 +36,14 @@
 # include "ExtPackManagerImpl.h"
 #endif
 #include "GuestImpl.h"
-#include "GuestDirEntryImpl.h"
+#ifdef VBOX_WITH_GUEST_CONTROL
+# include "GuestDirectoryImpl.h"
+# include "GuestDirEntryImpl.h"
+# include "GuestFileImpl.h"
+# include "GuestFsObjInfoImpl.h"
+# include "GuestProcessImpl.h"
+# include "GuestSessionImpl.h"
+#endif
 #include "KeyboardImpl.h"
 #include "MachineDebuggerImpl.h"
 #include "MouseImpl.h"
@@ -56,8 +63,20 @@
 
 NS_DECL_CLASSINFO(Guest)
 NS_IMPL_THREADSAFE_ISUPPORTS1_CI(Guest, IGuest)
+#ifdef VBOX_WITH_GUEST_CONTROL
+NS_DECL_CLASSINFO(GuestDirectory)
+NS_IMPL_THREADSAFE_ISUPPORTS1_CI(GuestDirectory, IGuestDirectory)
 NS_DECL_CLASSINFO(GuestDirEntry)
 NS_IMPL_THREADSAFE_ISUPPORTS1_CI(GuestDirEntry, IGuestDirEntry)
+NS_DECL_CLASSINFO(GuestFile)
+NS_IMPL_THREADSAFE_ISUPPORTS1_CI(GuestFile, IGuestFile)
+NS_DECL_CLASSINFO(GuestFsObjInfo)
+NS_IMPL_THREADSAFE_ISUPPORTS1_CI(GuestFsObjInfo, IGuestFsObjInfo)
+NS_DECL_CLASSINFO(GuestProcess)
+NS_IMPL_THREADSAFE_ISUPPORTS1_CI(GuestProcess, IGuestProcess)
+NS_DECL_CLASSINFO(GuestSession)
+NS_IMPL_THREADSAFE_ISUPPORTS1_CI(GuestSession, IGuestSession)
+#endif
 NS_DECL_CLASSINFO(Keyboard)
 NS_IMPL_THREADSAFE_ISUPPORTS1_CI(Keyboard, IKeyboard)
 NS_DECL_CLASSINFO(Mouse)

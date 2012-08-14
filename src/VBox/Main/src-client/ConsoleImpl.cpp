@@ -110,6 +110,7 @@
 #include <VBox/VMMDev.h>
 
 #include <VBox/HostServices/VBoxClipboardSvc.h>
+#include <VBox/HostServices/DragAndDropSvc.h>
 #ifdef VBOX_WITH_GUEST_PROPS
 # include <VBox/HostServices/GuestPropertySvc.h>
 # include <VBox/com/array.h>
@@ -323,9 +324,9 @@ public:
                 bool fUdp = (proto == NATProtocol_UDP);
                 Bstr hostIp, guestIp;
                 LONG hostPort, guestPort;
-                pNREv->COMGETTER(HostIp)(hostIp.asOutParam());
+                pNREv->COMGETTER(HostIP)(hostIp.asOutParam());
                 pNREv->COMGETTER(HostPort)(&hostPort);
-                pNREv->COMGETTER(GuestIp)(guestIp.asOutParam());
+                pNREv->COMGETTER(GuestIP)(guestIp.asOutParam());
                 pNREv->COMGETTER(GuestPort)(&guestPort);
                 ULONG ulSlot;
                 rc = pNREv->COMGETTER(Slot)(&ulSlot);
@@ -336,7 +337,7 @@ public:
             }
             break;
 
-            case VBoxEventType_OnHostPciDevicePlug:
+            case VBoxEventType_OnHostPCIDevicePlug:
             {
                 // handle if needed
                 break;
@@ -432,7 +433,7 @@ void Console::FinalRelease()
 // public initializer/uninitializer for internal purposes only
 /////////////////////////////////////////////////////////////////////////////
 
-HRESULT Console::init(IMachine *aMachine, IInternalMachineControl *aControl)
+HRESULT Console::init(IMachine *aMachine, IInternalMachineControl *aControl, LockType_T aLockType)
 {
     AssertReturn(aMachine && aControl, E_INVALIDARG);
 
@@ -448,116 +449,116 @@ HRESULT Console::init(IMachine *aMachine, IInternalMachineControl *aControl)
     unconst(mMachine) = aMachine;
     unconst(mControl) = aControl;
 
-    /* Cache essential properties and objects */
+    /* Cache essential properties and objects, and create child objects */
 
     rc = mMachine->COMGETTER(State)(&mMachineState);
     AssertComRCReturnRC(rc);
 
-    rc = mMachine->COMGETTER(VRDEServer)(unconst(mVRDEServer).asOutParam());
-    AssertComRCReturnRC(rc);
-
-    /* Create associated child COM objects */
+#ifdef VBOX_WITH_EXTPACK
+    unconst(mptrExtPackManager).createObject();
+    rc = mptrExtPackManager->initExtPackManager(NULL, VBOXEXTPACKCTX_VM_PROCESS);
+        AssertComRCReturnRC(rc);
+#endif
 
     // Event source may be needed by other children
     unconst(mEventSource).createObject();
     rc = mEventSource->init(static_cast<IConsole*>(this));
     AssertComRCReturnRC(rc);
 
-    unconst(mGuest).createObject();
-    rc = mGuest->init(this);
-    AssertComRCReturnRC(rc);
-
-    unconst(mKeyboard).createObject();
-    rc = mKeyboard->init(this);
-    AssertComRCReturnRC(rc);
-
-    unconst(mMouse).createObject();
-    rc = mMouse->init(this);
-    AssertComRCReturnRC(rc);
-
-    unconst(mDisplay).createObject();
-    rc = mDisplay->init(this);
-    AssertComRCReturnRC(rc);
-
-    unconst(mVRDEServerInfo).createObject();
-    rc = mVRDEServerInfo->init(this);
-    AssertComRCReturnRC(rc);
-
-#ifdef VBOX_WITH_EXTPACK
-    unconst(mptrExtPackManager).createObject();
-    rc = mptrExtPackManager->initExtPackManager(NULL, VBOXEXTPACKCTX_VM_PROCESS);
-    AssertComRCReturnRC(rc);
-#endif
-
-    /* Grab global and machine shared folder lists */
-
-    rc = fetchSharedFolders(true /* aGlobal */);
-    AssertComRCReturnRC(rc);
-    rc = fetchSharedFolders(false /* aGlobal */);
-    AssertComRCReturnRC(rc);
-
-    /* Create other child objects */
-
-    unconst(mConsoleVRDPServer) = new ConsoleVRDPServer(this);
-    AssertReturn(mConsoleVRDPServer, E_FAIL);
-
     mcAudioRefs = 0;
     mcVRDPClients = 0;
     mu32SingleRDPClientId = 0;
     mcGuestCredentialsProvided = false;
 
-    /* Figure out size of meAttachmentType vector */
-    ComPtr<IVirtualBox> pVirtualBox;
-    rc = aMachine->COMGETTER(Parent)(pVirtualBox.asOutParam());
-    AssertComRC(rc);
-    ComPtr<ISystemProperties> pSystemProperties;
-    if (pVirtualBox)
-        pVirtualBox->COMGETTER(SystemProperties)(pSystemProperties.asOutParam());
-    ChipsetType_T chipsetType = ChipsetType_PIIX3;
-    aMachine->COMGETTER(ChipsetType)(&chipsetType);
-    ULONG maxNetworkAdapters = 0;
-    if (pSystemProperties)
-        pSystemProperties->GetMaxNetworkAdapters(chipsetType, &maxNetworkAdapters);
-    meAttachmentType.resize(maxNetworkAdapters);
-    for (ULONG slot = 0; slot < maxNetworkAdapters; ++slot)
-        meAttachmentType[slot] = NetworkAttachmentType_Null;
+    /* Now the VM specific parts */
+    if (aLockType == LockType_VM)
+    {
+        rc = mMachine->COMGETTER(VRDEServer)(unconst(mVRDEServer).asOutParam());
+        AssertComRCReturnRC(rc);
 
+        unconst(mGuest).createObject();
+        rc = mGuest->init(this);
+        AssertComRCReturnRC(rc);
 
-    // VirtualBox 4.0: We no longer initialize the VMMDev instance here,
-    // which starts the HGCM thread. Instead, this is now done in the
-    // power-up thread when a VM is actually being powered up to avoid
-    // having HGCM threads all over the place every time a session is
-    // opened, even if that session will not run a VM.
-    //     unconst(m_pVMMDev) = new VMMDev(this);
-    //     AssertReturn(mVMMDev, E_FAIL);
+        unconst(mKeyboard).createObject();
+        rc = mKeyboard->init(this);
+        AssertComRCReturnRC(rc);
 
-    unconst(mAudioSniffer) = new AudioSniffer(this);
-    AssertReturn(mAudioSniffer, E_FAIL);
+        unconst(mMouse).createObject();
+        rc = mMouse->init(this);
+        AssertComRCReturnRC(rc);
+
+        unconst(mDisplay).createObject();
+        rc = mDisplay->init(this);
+        AssertComRCReturnRC(rc);
+
+        unconst(mVRDEServerInfo).createObject();
+        rc = mVRDEServerInfo->init(this);
+        AssertComRCReturnRC(rc);
+
+        /* Grab global and machine shared folder lists */
+
+        rc = fetchSharedFolders(true /* aGlobal */);
+        AssertComRCReturnRC(rc);
+        rc = fetchSharedFolders(false /* aGlobal */);
+        AssertComRCReturnRC(rc);
+
+        /* Create other child objects */
+
+        unconst(mConsoleVRDPServer) = new ConsoleVRDPServer(this);
+        AssertReturn(mConsoleVRDPServer, E_FAIL);
+
+        /* Figure out size of meAttachmentType vector */
+        ComPtr<IVirtualBox> pVirtualBox;
+        rc = aMachine->COMGETTER(Parent)(pVirtualBox.asOutParam());
+        AssertComRC(rc);
+        ComPtr<ISystemProperties> pSystemProperties;
+        if (pVirtualBox)
+            pVirtualBox->COMGETTER(SystemProperties)(pSystemProperties.asOutParam());
+        ChipsetType_T chipsetType = ChipsetType_PIIX3;
+        aMachine->COMGETTER(ChipsetType)(&chipsetType);
+        ULONG maxNetworkAdapters = 0;
+        if (pSystemProperties)
+            pSystemProperties->GetMaxNetworkAdapters(chipsetType, &maxNetworkAdapters);
+        meAttachmentType.resize(maxNetworkAdapters);
+        for (ULONG slot = 0; slot < maxNetworkAdapters; ++slot)
+            meAttachmentType[slot] = NetworkAttachmentType_Null;
+
+        // VirtualBox 4.0: We no longer initialize the VMMDev instance here,
+        // which starts the HGCM thread. Instead, this is now done in the
+        // power-up thread when a VM is actually being powered up to avoid
+        // having HGCM threads all over the place every time a session is
+        // opened, even if that session will not run a VM.
+        //     unconst(m_pVMMDev) = new VMMDev(this);
+        //     AssertReturn(mVMMDev, E_FAIL);
+
+        unconst(mAudioSniffer) = new AudioSniffer(this);
+        AssertReturn(mAudioSniffer, E_FAIL);
 #ifdef VBOX_WITH_USB_VIDEO
-    unconst(mUsbWebcamInterface) = new UsbWebcamInterface(this);
-    AssertReturn(mUsbWebcamInterface, E_FAIL);
+        unconst(mUsbWebcamInterface) = new UsbWebcamInterface(this);
+        AssertReturn(mUsbWebcamInterface, E_FAIL);
 #endif
 #ifdef VBOX_WITH_USB_CARDREADER
-    unconst(mUsbCardReader) = new UsbCardReader(this);
-    AssertReturn(mUsbCardReader, E_FAIL);
+        unconst(mUsbCardReader) = new UsbCardReader(this);
+        AssertReturn(mUsbCardReader, E_FAIL);
 #endif
 
-    /* VirtualBox events registration. */
-    {
-        ComPtr<IEventSource> pES;
-        rc = pVirtualBox->COMGETTER(EventSource)(pES.asOutParam());
-        AssertComRC(rc);
-        ComObjPtr<VmEventListenerImpl> aVmListener;
-        aVmListener.createObject();
-        aVmListener->init(new VmEventListener(), this);
-        mVmListener = aVmListener;
-        com::SafeArray<VBoxEventType_T> eventTypes;
-        eventTypes.push_back(VBoxEventType_OnNATRedirect);
-        eventTypes.push_back(VBoxEventType_OnHostPciDevicePlug);
-        rc = pES->RegisterListener(aVmListener, ComSafeArrayAsInParam(eventTypes), true);
-        AssertComRC(rc);
+        /* VirtualBox events registration. */
+        {
+            ComPtr<IEventSource> pES;
+            rc = pVirtualBox->COMGETTER(EventSource)(pES.asOutParam());
+            AssertComRC(rc);
+            ComObjPtr<VmEventListenerImpl> aVmListener;
+            aVmListener.createObject();
+            aVmListener->init(new VmEventListener(), this);
+            mVmListener = aVmListener;
+            com::SafeArray<VBoxEventType_T> eventTypes;
+            eventTypes.push_back(VBoxEventType_OnNATRedirect);
+            eventTypes.push_back(VBoxEventType_OnHostPCIDevicePlug);
+            rc = pES->RegisterListener(aVmListener, ComSafeArrayAsInParam(eventTypes), true);
+            AssertComRC(rc);
+        }
     }
-
 
     /* Confirm a successful initialization when it's the case */
     autoInitSpan.setSucceeded();
@@ -673,7 +674,7 @@ void Console::uninit()
     if (mVRDEServerInfo)
     {
         mVRDEServerInfo->uninit();
-        unconst(mVRDEServerInfo).setNull();;
+        unconst(mVRDEServerInfo).setNull();
     }
 
     if (mDebugger)
@@ -697,13 +698,13 @@ void Console::uninit()
     if (mKeyboard)
     {
         mKeyboard->uninit();
-        unconst(mKeyboard).setNull();;
+        unconst(mKeyboard).setNull();
     }
 
     if (mGuest)
     {
         mGuest->uninit();
-        unconst(mGuest).setNull();;
+        unconst(mGuest).setNull();
     }
 
     if (mConsoleVRDPServer)
@@ -1921,7 +1922,7 @@ STDMETHODIMP Console::COMGETTER(EventSource)(IEventSource ** aEventSource)
     return hrc;
 }
 
-STDMETHODIMP Console::COMGETTER(AttachedPciDevices)(ComSafeArrayOut(IPciDeviceAttachment *, aAttachments))
+STDMETHODIMP Console::COMGETTER(AttachedPCIDevices)(ComSafeArrayOut(IPCIDeviceAttachment *, aAttachments))
 {
     CheckComArgOutSafeArrayPointerValid(aAttachments);
 
@@ -1931,10 +1932,10 @@ STDMETHODIMP Console::COMGETTER(AttachedPciDevices)(ComSafeArrayOut(IPciDeviceAt
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
     if (mBusMgr)
-        mBusMgr->listAttachedPciDevices(ComSafeArrayOutArg(aAttachments));
+        mBusMgr->listAttachedPCIDevices(ComSafeArrayOutArg(aAttachments));
     else
     {
-        com::SafeIfaceArray<IPciDeviceAttachment> result((size_t)0);
+        com::SafeIfaceArray<IPCIDeviceAttachment> result((size_t)0);
         result.detachTo(ComSafeArrayOutArg(aAttachments));
     }
 
@@ -3773,7 +3774,7 @@ DECLCALLBACK(int) Console::changeRemovableMedium(Console *pConsole,
                                              enmBus,
                                              fUseHostIOCache,
                                              false /* fSetupMerge */,
-                                             false /* fBuiltinIoCache */,
+                                             false /* fBuiltinIOCache */,
                                              0 /* uMergeSource */,
                                              0 /* uMergeTarget */,
                                              aMediumAtt,
@@ -4018,7 +4019,7 @@ DECLCALLBACK(int) Console::attachStorageDevice(Console *pConsole,
                                              enmBus,
                                              fUseHostIOCache,
                                              false /* fSetupMerge */,
-                                             false /* fBuiltinIoCache */,
+                                             false /* fBuiltinIOCache */,
                                              0 /* uMergeSource */,
                                              0 /* uMergeTarget */,
                                              aMediumAtt,
@@ -4434,7 +4435,7 @@ HRESULT Console::onNetworkAdapterChange(INetworkAdapter *aNetworkAdapter, BOOL c
  * @note Locks this object for writing.
  */
 HRESULT Console::onNATRedirectRuleChange(ULONG ulInstance, BOOL aNatRuleRemove,
-                                         NATProtocol_T aProto, IN_BSTR aHostIp, LONG aHostPort, IN_BSTR aGuestIp, LONG aGuestPort)
+                                         NATProtocol_T aProto, IN_BSTR aHostIP, LONG aHostPort, IN_BSTR aGuestIP, LONG aGuestPort)
 {
     LogFlowThisFunc(("\n"));
 
@@ -4505,7 +4506,7 @@ HRESULT Console::onNATRedirectRuleChange(ULONG ulInstance, BOOL aNatRuleRemove,
 
             bool fUdp = aProto == NATProtocol_UDP;
             vrc = pNetNatCfg->pfnRedirectRuleCommand(pNetNatCfg, !!aNatRuleRemove, fUdp,
-                                                     Utf8Str(aHostIp).c_str(), aHostPort, Utf8Str(aGuestIp).c_str(),
+                                                     Utf8Str(aHostIP).c_str(), aHostPort, Utf8Str(aGuestIP).c_str(),
                                                      aGuestPort);
             if (RT_FAILURE(vrc))
                 rc = E_FAIL;
@@ -4886,6 +4887,46 @@ HRESULT Console::onClipboardModeChange(ClipboardMode_T aClipboardMode)
     {
         alock.release();
         fireClipboardModeChangedEvent(mEventSource, aClipboardMode);
+    }
+
+    LogFlowThisFunc(("Leaving rc=%#x\n", rc));
+    return rc;
+}
+
+/**
+ * Called by IInternalSessionControl::OnDragAndDropModeChange().
+ *
+ * @note Locks this object for writing.
+ */
+HRESULT Console::onDragAndDropModeChange(DragAndDropMode_T aDragAndDropMode)
+{
+    LogFlowThisFunc(("\n"));
+
+    AutoCaller autoCaller(this);
+    AssertComRCReturnRC(autoCaller.rc());
+
+    AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
+
+    HRESULT rc = S_OK;
+
+    /* don't trigger the Drag'n'drop mode change if the VM isn't running */
+    SafeVMPtrQuiet ptrVM(this);
+    if (ptrVM.isOk())
+    {
+        if (   mMachineState == MachineState_Running
+            || mMachineState == MachineState_Teleporting
+            || mMachineState == MachineState_LiveSnapshotting)
+            changeDragAndDropMode(aDragAndDropMode);
+        else
+            rc = setInvalidMachineStateError();
+        ptrVM.release();
+    }
+
+    /* notify console callbacks on success */
+    if (SUCCEEDED(rc))
+    {
+        alock.release();
+        fireDragAndDropModeChangedEvent(mEventSource, aDragAndDropMode);
     }
 
     LogFlowThisFunc(("Leaving rc=%#x\n", rc));
@@ -5516,8 +5557,8 @@ HRESULT Console::onlineMergeMedium(IMediumAttachment *aMediumAttachment,
 
     /** @todo AssertComRC -> AssertComRCReturn! Could potentially end up
      *        using uninitialized variables here. */
-    BOOL fBuiltinIoCache;
-    rc = mMachine->COMGETTER(IoCacheEnabled)(&fBuiltinIoCache);
+    BOOL fBuiltinIOCache;
+    rc = mMachine->COMGETTER(IOCacheEnabled)(&fBuiltinIOCache);
     AssertComRC(rc);
     SafeIfaceArray<IStorageController> ctrls;
     rc = mMachine->COMGETTER(StorageControllers)(ComSafeArrayAsOutParam(ctrls));
@@ -5601,7 +5642,7 @@ HRESULT Console::onlineMergeMedium(IMediumAttachment *aMediumAttachment,
                           uInstance,
                           enmBus,
                           fUseHostIOCache,
-                          fBuiltinIoCache,
+                          fBuiltinIOCache,
                           true /* fSetupMerge */,
                           aSourceIdx,
                           aTargetIdx,
@@ -5677,7 +5718,7 @@ HRESULT Console::onlineMergeMedium(IMediumAttachment *aMediumAttachment,
                           uInstance,
                           enmBus,
                           fUseHostIOCache,
-                          fBuiltinIoCache,
+                          fBuiltinIOCache,
                           false /* fSetupMerge */,
                           0 /* uMergeSource */,
                           0 /* uMergeTarget */,
@@ -7685,24 +7726,61 @@ void Console::changeClipboardMode(ClipboardMode_T aClipboardMode)
     {
         default:
         case ClipboardMode_Disabled:
-            LogRel(("VBoxSharedClipboard mode: Off\n"));
+            LogRel(("Shared cipboard mode: Off\n"));
             parm.u.uint32 = VBOX_SHARED_CLIPBOARD_MODE_OFF;
             break;
         case ClipboardMode_GuestToHost:
-            LogRel(("VBoxSharedClipboard mode: Guest to Host\n"));
+            LogRel(("Shared clipboard mode: Guest to Host\n"));
             parm.u.uint32 = VBOX_SHARED_CLIPBOARD_MODE_GUEST_TO_HOST;
             break;
         case ClipboardMode_HostToGuest:
-            LogRel(("VBoxSharedClipboard mode: Host to Guest\n"));
+            LogRel(("Shared clipboard mode: Host to Guest\n"));
             parm.u.uint32 = VBOX_SHARED_CLIPBOARD_MODE_HOST_TO_GUEST;
             break;
         case ClipboardMode_Bidirectional:
-            LogRel(("VBoxSharedClipboard mode: Bidirectional\n"));
+            LogRel(("Shared clipboard mode: Bidirectional\n"));
             parm.u.uint32 = VBOX_SHARED_CLIPBOARD_MODE_BIDIRECTIONAL;
             break;
     }
 
     pVMMDev->hgcmHostCall("VBoxSharedClipboard", VBOX_SHARED_CLIPBOARD_HOST_FN_SET_MODE, 1, &parm);
+}
+
+/**
+ * Changes the drag'n_drop mode.
+ *
+ * @param aDragAndDropMode  new drag'n'drop mode.
+ */
+void Console::changeDragAndDropMode(DragAndDropMode_T aDragAndDropMode)
+{
+    VMMDev *pVMMDev = m_pVMMDev;
+    Assert(pVMMDev);
+
+    VBOXHGCMSVCPARM parm;
+    parm.type = VBOX_HGCM_SVC_PARM_32BIT;
+
+    switch (aDragAndDropMode)
+    {
+        default:
+        case DragAndDropMode_Disabled:
+            LogRel(("Drag'n'drop mode: Off\n"));
+            parm.u.uint32 = VBOX_DRAG_AND_DROP_MODE_OFF;
+            break;
+        case ClipboardMode_GuestToHost:
+            LogRel(("Drag'n'drop mode: Guest to Host\n"));
+            parm.u.uint32 = VBOX_DRAG_AND_DROP_MODE_GUEST_TO_HOST;
+            break;
+        case ClipboardMode_HostToGuest:
+            LogRel(("Drag'n'drop mode: Host to Guest\n"));
+            parm.u.uint32 = VBOX_DRAG_AND_DROP_MODE_HOST_TO_GUEST;
+            break;
+        case ClipboardMode_Bidirectional:
+            LogRel(("Drag'n'drop mode: Bidirectional\n"));
+            parm.u.uint32 = VBOX_DRAG_AND_DROP_MODE_BIDIRECTIONAL;
+            break;
+    }
+
+    pVMMDev->hgcmHostCall("VBoxDragAndDropSvc", DragAndDropSvc::HOST_DND_SET_MODE, 1, &parm);
 }
 
 #ifdef VBOX_WITH_USB
@@ -9017,7 +9095,7 @@ DECLCALLBACK(int) Console::reconfigureMediumAttachment(Console *pConsole,
                                                        unsigned uInstance,
                                                        StorageBus_T enmBus,
                                                        bool fUseHostIOCache,
-                                                       bool fBuiltinIoCache,
+                                                       bool fBuiltinIOCache,
                                                        bool fSetupMerge,
                                                        unsigned uMergeSource,
                                                        unsigned uMergeTarget,
@@ -9052,7 +9130,7 @@ DECLCALLBACK(int) Console::reconfigureMediumAttachment(Console *pConsole,
                                           uInstance,
                                           enmBus,
                                           fUseHostIOCache,
-                                          fBuiltinIoCache,
+                                          fBuiltinIOCache,
                                           fSetupMerge,
                                           uMergeSource,
                                           uMergeTarget,
@@ -9235,8 +9313,8 @@ DECLCALLBACK(int) Console::fntTakeSnapshotWorker(RTTHREAD Thread, void *pvUser)
 
                 const char *pcszDevice = Console::convertControllerTypeToDev(enmController);
 
-                BOOL fBuiltinIoCache;
-                rc = that->mMachine->COMGETTER(IoCacheEnabled)(&fBuiltinIoCache);
+                BOOL fBuiltinIOCache;
+                rc = that->mMachine->COMGETTER(IOCacheEnabled)(&fBuiltinIOCache);
                 if (FAILED(rc))
                     throw rc;
 
@@ -9254,7 +9332,7 @@ DECLCALLBACK(int) Console::fntTakeSnapshotWorker(RTTHREAD Thread, void *pvUser)
                                       lInstance,
                                       enmBus,
                                       fUseHostIOCache,
-                                      fBuiltinIoCache,
+                                      fBuiltinIOCache,
                                       false /* fSetupMerge */,
                                       0 /* uMergeSource */,
                                       0 /* uMergeTarget */,

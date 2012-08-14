@@ -44,7 +44,7 @@ class ExtPackManager;
 #endif
 class AutostartDb;
 
-typedef std::list< ComObjPtr<SessionMachine> > SessionMachinesList;
+typedef std::list<ComObjPtr<SessionMachine> > SessionMachinesList;
 
 #ifdef RT_OS_WINDOWS
 class SVCHlpClient;
@@ -67,7 +67,7 @@ class ATL_NO_VTABLE VirtualBox :
 
 public:
 
-    typedef std::list< ComPtr<IInternalSessionControl> > InternalControlList;
+    typedef std::list<ComPtr<IInternalSessionControl> > InternalControlList;
 
     class CallbackEvent;
     friend class CallbackEvent;
@@ -110,6 +110,7 @@ public:
     STDMETHOD(COMGETTER(Host))(IHost **aHost);
     STDMETHOD(COMGETTER(SystemProperties))(ISystemProperties **aSystemProperties);
     STDMETHOD(COMGETTER(Machines))(ComSafeArrayOut(IMachine *, aMachines));
+    STDMETHOD(COMGETTER(MachineGroups))(ComSafeArrayOut(BSTR, aMachineGroups));
     STDMETHOD(COMGETTER(HardDisks))(ComSafeArrayOut(IMedium *, aHardDisks));
     STDMETHOD(COMGETTER(DVDImages))(ComSafeArrayOut(IMedium *, aDVDImages));
     STDMETHOD(COMGETTER(FloppyImages))(ComSafeArrayOut(IMedium *, aFloppyImages));
@@ -124,9 +125,10 @@ public:
     STDMETHOD(COMGETTER(GenericNetworkDrivers))(ComSafeArrayOut(BSTR, aGenericNetworkDrivers));
 
     /* IVirtualBox methods */
-    STDMETHOD(ComposeMachineFilename)(IN_BSTR aName, IN_BSTR aBaseFolder, BSTR *aFilename);
+    STDMETHOD(ComposeMachineFilename)(IN_BSTR aName, IN_BSTR aGroup, IN_BSTR aBaseFolder, BSTR *aFilename);
     STDMETHOD(CreateMachine)(IN_BSTR aSettingsFile,
                              IN_BSTR aName,
+                             ComSafeArrayIn(IN_BSTR, aGroups),
                              IN_BSTR aOsTypeId,
                              IN_BSTR aId,
                              BOOL forceOverwrite,
@@ -134,6 +136,7 @@ public:
     STDMETHOD(OpenMachine)(IN_BSTR aSettingsFile, IMachine **aMachine);
     STDMETHOD(RegisterMachine)(IMachine *aMachine);
     STDMETHOD(FindMachine)(IN_BSTR aNameOrId, IMachine **aMachine);
+    STDMETHOD(GetMachinesByGroups)(ComSafeArrayIn(IN_BSTR, aGroups), ComSafeArrayOut(IMachine *, aMachines));
     STDMETHOD(GetMachineStates)(ComSafeArrayIn(IMachine *, aMachines), ComSafeArrayOut(MachineState_T, aStates));
     STDMETHOD(CreateAppliance)(IAppliance **anAppliance);
 
@@ -152,6 +155,7 @@ public:
     STDMETHOD(GetExtraDataKeys)(ComSafeArrayOut(BSTR, aKeys));
     STDMETHOD(GetExtraData)(IN_BSTR aKey, BSTR *aValue);
     STDMETHOD(SetExtraData)(IN_BSTR aKey, IN_BSTR aValue);
+    STDMETHOD(SetSettingsSecret)(IN_BSTR aKey);
 
     STDMETHOD(CreateDHCPServer)(IN_BSTR aName, IDHCPServer ** aServer);
     STDMETHOD(FindDHCPServerByNetworkName)(IN_BSTR aName, IDHCPServer ** aServer);
@@ -217,6 +221,9 @@ public:
                         bool fPermitInaccessible,
                         bool aSetError,
                         ComObjPtr<Machine> *machine = NULL);
+
+    HRESULT validateMachineGroup(const Utf8Str &aGroup);
+    HRESULT convertMachineGroups(ComSafeArrayIn(IN_BSTR, aMachineGroups), StringsList *pllMachineGroups);
 
     HRESULT findHardDiskById(const Guid &id,
                              bool aSetError,
@@ -285,6 +292,10 @@ public:
 
     RWLockHandle& getMediaTreeLockHandle();
 
+    int  encryptSetting(const Utf8Str &aPlaintext, Utf8Str *aCiphertext);
+    int  decryptSetting(Utf8Str *aPlaintext, const Utf8Str &aCiphertext);
+    void storeSettingsKey(const Utf8Str &aKey);
+
 private:
 
     static HRESULT setErrorStatic(HRESULT aResultCode,
@@ -304,6 +315,13 @@ private:
                                bool aSaveRegistry = true);
     HRESULT unregisterDHCPServer(DHCPServer *aDHCPServer,
                                  bool aSaveRegistry = true);
+
+    int  decryptSettings();
+    int  decryptMediumSettings(Medium *pMedium);
+    int  decryptSettingBytes(uint8_t *aPlaintext, const uint8_t *aCiphertext,
+                             size_t aCiphertextSize) const;
+    int  encryptSettingBytes(const uint8_t *aPlaintext, uint8_t *aCiphertext,
+                             size_t aPlaintextSize, size_t aCiphertextSize) const;
 
     struct Data;            // opaque data structure, defined in VirtualBoxImpl.cpp
     Data *m;

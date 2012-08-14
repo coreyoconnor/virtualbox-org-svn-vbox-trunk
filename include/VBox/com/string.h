@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -510,6 +510,11 @@ public:
         copyFrom(that);
     }
 
+    Utf8Str(const char *a_pszSrc, size_t a_cchSrc)
+        : RTCString(a_pszSrc, a_cchSrc)
+    {
+    }
+
     /**
      * Constructs a new string given the format string and the list of the
      * arguments for the format string.
@@ -552,6 +557,62 @@ public:
     }
 
     bool operator<(const RTCString &that) const { return RTCString::operator<(that); }
+
+    /**
+     * Extended assignment method that returns a COM status code instead of an
+     * exception on failure.
+     *
+     * @returns S_OK or E_OUTOFMEMORY.
+     * @param   a_rSrcStr   The source string
+     */
+    HRESULT assignEx(Utf8Str const &a_rSrcStr)
+    {
+        return copyFromExNComRC(a_rSrcStr.m_psz, a_rSrcStr.m_cch);
+    }
+
+    /**
+     * Extended assignment method that returns a COM status code instead of an
+     * exception on failure.
+     *
+     * @returns S_OK, E_OUTOFMEMORY or E_INVALIDARG.
+     * @param   a_pcszSrc   The source string
+     * @param   a_offSrc    The character (byte) offset of the substring.
+     * @param   a_cchSrc    The number of characters (bytes) to copy from the source
+     *                      string.
+     */
+    HRESULT assignEx(Utf8Str const &a_rSrcStr, size_t a_offSrc, size_t a_cchSrc)
+    {
+        if (   a_offSrc + a_cchSrc > a_rSrcStr.m_cch
+            || a_offSrc > a_rSrcStr.m_cch)
+            return E_INVALIDARG;
+        return copyFromExNComRC(a_rSrcStr.m_psz, a_rSrcStr.m_cch);
+    }
+
+    /**
+     * Extended assignment method that returns a COM status code instead of an
+     * exception on failure.
+     *
+     * @returns S_OK or E_OUTOFMEMORY.
+     * @param   a_pcszSrc   The source string
+     */
+    HRESULT assignEx(const char *a_pcszSrc)
+    {
+        return copyFromExNComRC(a_pcszSrc, a_pcszSrc ? strlen(a_pcszSrc) : 0);
+    }
+
+    /**
+     * Extended assignment method that returns a COM status code instead of an
+     * exception on failure.
+     *
+     * @returns S_OK or E_OUTOFMEMORY.
+     * @param   a_pcszSrc   The source string
+     * @param   a_cchSrc    The number of characters (bytes) to copy from the source
+     *                      string.
+     */
+    HRESULT assignEx(const char *a_pcszSrc, size_t a_cchSrc)
+    {
+        return copyFromExNComRC(a_pcszSrc, a_cchSrc);
+    }
 
     RTMEMEF_NEW_AND_DELETE_OPERATORS();
 
@@ -649,6 +710,7 @@ protected:
 
     void copyFrom(CBSTR a_pbstr);
     HRESULT copyFromEx(CBSTR a_pbstr);
+    HRESULT copyFromExNComRC(const char *a_pcszSrc, size_t a_cchSrc);
 
     friend class Bstr; /* to access our raw_copy() */
 };

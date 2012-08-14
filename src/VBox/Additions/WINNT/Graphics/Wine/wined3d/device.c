@@ -1328,6 +1328,10 @@ static HRESULT WINAPI IWineD3DDeviceImpl_CreateVertexShader(IWineD3DDevice *ifac
         return hr;
     }
 
+#ifdef VBOX_WINE_WITH_SHADER_CACHE
+    object = vertexshader_check_cached(This, object);
+#endif
+
     TRACE("Created vertex shader %p.\n", object);
     *ppVertexShader = (IWineD3DVertexShader *)object;
 
@@ -1387,6 +1391,10 @@ static HRESULT WINAPI IWineD3DDeviceImpl_CreatePixelShader(IWineD3DDevice *iface
         HeapFree(GetProcessHeap(), 0, object);
         return hr;
     }
+
+#ifdef VBOX_WINE_WITH_SHADER_CACHE
+    object = pixelshader_check_cached(This, object);
+#endif
 
     TRACE("Created pixel shader %p.\n", object);
     *ppPixelShader = (IWineD3DPixelShader *)object;
@@ -1592,6 +1600,14 @@ static HRESULT WINAPI IWineD3DDeviceImpl_Init3D(IWineD3DDevice *iface,
     if(This->d3d_initialized) return WINED3DERR_INVALIDCALL;
     if(!This->adapter->opengl) return WINED3DERR_INVALIDCALL;
 
+#ifdef VBOX_WITH_WDDM
+    if (!pPresentationParameters->pHgsmi)
+    {
+        ERR("hgsmi not specified!");
+        return WINED3DERR_INVALIDCALL;
+    }
+    This->pHgsmi = pPresentationParameters->pHgsmi;
+#endif
     TRACE("(%p) : Creating stateblock\n", This);
     /* Creating the startup stateBlock - Note Special Case: 0 => Don't fill in yet! */
     hr = IWineD3DDevice_CreateStateBlock(iface,
@@ -1901,6 +1917,10 @@ static HRESULT WINAPI IWineD3DDeviceImpl_Uninit3D(IWineD3DDevice *iface,
         }
     }
 
+#ifdef VBOX_WINE_WITH_SHADER_CACHE
+    shader_chaches_term(This);
+#endif
+
     /* Destroy the shader backend. Note that this has to happen after all shaders are destroyed. */
     This->blitter->free_private(iface);
     This->frag_pipe->free_private(iface);
@@ -2056,6 +2076,7 @@ static HRESULT WINAPI IWineD3DDeviceImpl_GetDirect3D(IWineD3DDevice *iface, IWin
 }
 
 static UINT WINAPI IWineD3DDeviceImpl_GetAvailableTextureMem(IWineD3DDevice *iface) {
+#ifndef VBOX_WITH_WDDM
     IWineD3DDeviceImpl *This = (IWineD3DDeviceImpl *)iface;
 
     TRACE("(%p) : simulating %dMB, returning %dMB left\n",  This,
@@ -2063,6 +2084,10 @@ static UINT WINAPI IWineD3DDeviceImpl_GetAvailableTextureMem(IWineD3DDevice *ifa
          ((This->adapter->TextureRam - This->adapter->UsedTextureRam) / (1024*1024)));
     /* return simulated texture memory left */
     return (This->adapter->TextureRam - This->adapter->UsedTextureRam);
+#else
+    ERR("Should not be here!");
+    return 0;
+#endif
 }
 
 /*****
@@ -6438,6 +6463,10 @@ static HRESULT create_primary_opengl_context(IWineD3DDevice *iface, IWineD3DSwap
     HRESULT hr;
     IWineD3DSurfaceImpl *target;
 
+#ifdef VBOX_WITH_WDDM
+    ERR("Should not be here!");
+#endif
+
 #ifndef VBOX_WITH_WDDM
     /* Recreate the primary swapchain's context */
     swapchain->context = HeapAlloc(GetProcessHeap(), 0, sizeof(*swapchain->context));
@@ -6449,7 +6478,11 @@ static HRESULT create_primary_opengl_context(IWineD3DDevice *iface, IWineD3DSwap
 #endif
 
     target = (IWineD3DSurfaceImpl *)(swapchain->backBuffer ? swapchain->backBuffer[0] : swapchain->frontBuffer);
-    if (!(context = context_create(swapchain, target, swapchain->ds_format)))
+    if (!(context = context_create(swapchain, target, swapchain->ds_format
+#ifdef VBOX_WITH_WDDM
+                , This->pHgsmi
+#endif
+            )))
     {
         WARN("Failed to create context.\n");
 #ifndef VBOX_WITH_WDDM
@@ -7319,6 +7352,10 @@ HRESULT device_init(IWineD3DDeviceImpl *device, IWineD3DImpl *wined3d,
     }
 
     device->blitter = adapter->blitter;
+
+#ifdef VBOX_WINE_WITH_SHADER_CACHE
+    shader_chaches_init(device);
+#endif
 
     return WINED3D_OK;
 }

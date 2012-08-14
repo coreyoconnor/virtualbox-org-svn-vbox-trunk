@@ -36,6 +36,10 @@
 #include <stdio.h>
 #include "wined3d_private.h"
 
+#ifdef VBOX_WITH_WDDM
+# include <VBox/VBoxCrHgsmi.h>
+#endif
+
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 WINE_DECLARE_DEBUG_CHANNEL(d3d_caps);
 
@@ -253,7 +257,7 @@ static void WineD3D_ReleaseFakeGLContext(struct wined3d_fake_gl_ctx *ctx)
     }
 }
 
-static BOOL WineD3D_CreateFakeGLContext(struct wined3d_fake_gl_ctx *ctx)
+static BOOL WineD3D_CreateFakeGLContext(struct wined3d_fake_gl_ctx *ctx, struct VBOXUHGSMI *pHgsmi)
 {
     PIXELFORMATDESCRIPTOR pfd;
     int iPixelFormat;
@@ -299,7 +303,7 @@ static BOOL WineD3D_CreateFakeGLContext(struct wined3d_fake_gl_ctx *ctx)
     SetPixelFormat(ctx->dc, iPixelFormat, &pfd);
 
     /* Create a GL context. */
-    ctx->gl_ctx = pwglCreateContext(ctx->dc);
+    ctx->gl_ctx = pVBoxCreateContext(ctx->dc, pHgsmi);
     if (!ctx->gl_ctx)
     {
         WARN_(d3d_caps)("Error creating default context for capabilities initialization.\n");
@@ -335,6 +339,7 @@ fail:
     return FALSE;
 }
 
+#ifndef VBOX_WITH_WDDM
 /* Adjust the amount of used texture memory */
 long WineD3DAdapterChangeGLRam(IWineD3DDeviceImpl *D3DDevice, long glram)
 {
@@ -344,6 +349,7 @@ long WineD3DAdapterChangeGLRam(IWineD3DDeviceImpl *D3DDevice, long glram)
     TRACE("Adjusted gl ram by %ld to %d\n", glram, adapter->UsedTextureRam);
     return adapter->UsedTextureRam;
 }
+#endif
 
 static void wined3d_adapter_cleanup(struct wined3d_adapter *adapter)
 {
@@ -2975,7 +2981,7 @@ static HRESULT WINAPI IWineD3DImpl_GetAdapterDisplayMode(IWineD3D *iface, UINT A
     return WINED3D_OK;
 }
 
-static HRESULT WINAPI IWineD3DImpl_GetAdapterDisplayModeEx(IWineD3D *iface, 
+static HRESULT WINAPI IWineD3DImpl_GetAdapterDisplayModeEx(IWineD3D *iface,
         UINT Adapter, WINED3DDISPLAYMODEEX *pMode, WINED3DDISPLAYROTATION *pRotation)
 {
     TRACE("iface %p, adapter_idx %u, display_mode %p, display_rotation %p.\n", iface, Adapter, pMode, pRotation);
@@ -3021,10 +3027,7 @@ static HRESULT WINAPI IWineD3DImpl_GetAdapterDisplayModeEx(IWineD3D *iface,
             pMode->ScanLineOrdering = WINED3DSCANLINEORDERING_PROGRESSIVE;
             if (DevModeW.dmFields&DM_DISPLAYFLAGS)
             {
-#if 0 //defined(RT_ARCH_AMD64) && !defined(VBOX_WITH_WDDM)
-# ifndef DM_INTERLACED
-#  define DM_INTERLACED 0x00000002
-# endif
+#ifdef VBOX_USING_WINDDK_W7_OR_LATER
                 if (DevModeW.dmDisplayFlags&DM_INTERLACED)
 #else
                 if (DevModeW.u2.dmDisplayFlags&DM_INTERLACED)
@@ -3040,7 +3043,7 @@ static HRESULT WINAPI IWineD3DImpl_GetAdapterDisplayModeEx(IWineD3D *iface,
             *pRotation = WINED3DDISPLAYROTATION_IDENTITY;
             if (DevModeW.dmFields&DM_DISPLAYORIENTATION)
             {
-#if 0 //defined(RT_ARCH_AMD64) && !defined(VBOX_WITH_WDDM)
+#ifdef VBOX_USING_WINDDK_W7_OR_LATER
                 switch (DevModeW.dmDisplayOrientation)
 #else
                 switch (DevModeW.u.s2.dmDisplayOrientation)
@@ -3059,7 +3062,7 @@ static HRESULT WINAPI IWineD3DImpl_GetAdapterDisplayModeEx(IWineD3D *iface,
                         *pRotation = WINED3DDISPLAYROTATION_270;
                         break;
                     default:
-#if 0 //defined(RT_ARCH_AMD64) && !defined(VBOX_WITH_WDDM)
+#ifdef VBOX_USING_WINDDK_W7_OR_LATER
                         WARN("Unexpected display orientation %#x", DevModeW.dmDisplayOrientation);
 #else
                         WARN("Unexpected display orientation %#x", DevModeW.u.s2.dmDisplayOrientation);
@@ -3079,6 +3082,10 @@ static HRESULT WINAPI IWineD3DImpl_GetAdapterDisplayModeEx(IWineD3D *iface,
    and fields being inserted in the middle, a new structure is used in place    */
 static HRESULT WINAPI IWineD3DImpl_GetAdapterIdentifier(IWineD3D *iface, UINT Adapter, DWORD Flags,
                                                    WINED3DADAPTER_IDENTIFIER* pIdentifier) {
+#ifdef VBOX_WITH_WDDM
+    ERR("Should not be here!");
+    return WINED3DERR_INVALIDCALL;
+#else
     IWineD3DImpl *This = (IWineD3DImpl *)iface;
     struct wined3d_adapter *adapter;
     size_t len;
@@ -3138,6 +3145,7 @@ static HRESULT WINAPI IWineD3DImpl_GetAdapterIdentifier(IWineD3D *iface, UINT Ad
     pIdentifier->video_memory = adapter->TextureRam;
 
     return WINED3D_OK;
+#endif
 }
 
 static BOOL IWineD3DImpl_IsPixelFormatCompatibleWithRenderFmt(const struct wined3d_gl_info *gl_info,
@@ -5304,6 +5312,7 @@ static BOOL InitAdapters(IWineD3DImpl *This)
     static HMODULE mod_gl;
     BOOL ret;
     int ps_selected_mode, vs_selected_mode;
+    struct VBOXUHGSMI *pHgsmi = NULL;
 
     /* No need to hold any lock. The calling library makes sure only one thread calls
      * wined3d simultaneously
@@ -5350,6 +5359,7 @@ static BOOL InitAdapters(IWineD3DImpl *This)
 /* Load WGL core functions from opengl32.dll */
 #define USE_WGL_FUNC(pfn) p##pfn = (void*)GetProcAddress(mod_gl, #pfn);
     WGL_FUNCS_GEN;
+    VBOX_FUNCS_GEN;
 #undef USE_WGL_FUNC
 
     if(!pwglGetProcAddress) {
@@ -5374,6 +5384,15 @@ static BOOL InitAdapters(IWineD3DImpl *This)
 
     glEnableWINE = glEnable;
     glDisableWINE = glDisable;
+
+#ifdef VBOX_WITH_WDDM
+    pHgsmi = VBoxCrHgsmiCreate();
+    if (!pHgsmi)
+    {
+        ERR("VBoxCrHgsmiCreate failed");
+        goto nogl_adapter;
+    }
+#endif
 
     /* For now only one default adapter */
     {
@@ -5401,7 +5420,7 @@ static BOOL InitAdapters(IWineD3DImpl *This)
         TRACE("Allocated LUID %08x:%08x for adapter.\n",
                 adapter->luid.HighPart, adapter->luid.LowPart);
 
-        if (!WineD3D_CreateFakeGLContext(&fake_gl_ctx))
+        if (!WineD3D_CreateFakeGLContext(&fake_gl_ctx, pHgsmi))
         {
             ERR("Failed to get a gl context for default adapter\n");
             goto nogl_adapter;
@@ -5421,7 +5440,7 @@ static BOOL InitAdapters(IWineD3DImpl *This)
         }
 
         hdc = fake_gl_ctx.dc;
-
+#ifndef VBOX_WITH_WDDM
         /* Use the VideoRamSize registry setting when set */
         if(wined3d_settings.emulated_textureram)
             adapter->TextureRam = wined3d_settings.emulated_textureram;
@@ -5429,7 +5448,7 @@ static BOOL InitAdapters(IWineD3DImpl *This)
             adapter->TextureRam = adapter->gl_info.vidmem;
         adapter->UsedTextureRam = 0;
         TRACE("Emulating %dMB of texture ram\n", adapter->TextureRam/(1024*1024));
-
+#endif
         /* Initialize the Adapter's DeviceName which is required for ChangeDisplaySettings and friends */
         DisplayDevice.cb = sizeof(DisplayDevice);
         EnumDisplayDevicesW(NULL, 0 /* Adapter 0 = iDevNum 0 */, &DisplayDevice, 0);
@@ -5590,6 +5609,11 @@ static BOOL InitAdapters(IWineD3DImpl *This)
     This->adapter_count = 1;
     TRACE("%u adapters successfully initialized\n", This->adapter_count);
 
+#ifdef VBOX_WITH_WDDM
+    VBoxCrHgsmiDestroy(pHgsmi);
+    pHgsmi = NULL;
+#endif
+
     return TRUE;
 
 nogl_adapter:
@@ -5602,13 +5626,22 @@ nogl_adapter:
 
     This->adapters[0].driver_info.name = "Display";
     This->adapters[0].driver_info.description = "WineD3D DirectDraw Emulation";
+#ifndef VBOX_WITH_WDDM
     if(wined3d_settings.emulated_textureram) {
         This->adapters[0].TextureRam = wined3d_settings.emulated_textureram;
     } else {
         This->adapters[0].TextureRam = 8 * 1024 * 1024; /* This is plenty for a DDraw-only card */
     }
-
+#endif
     initPixelFormatsNoGL(&This->adapters[0].gl_info);
+
+#ifdef VBOX_WITH_WDDM
+    if (pHgsmi)
+    {
+        VBoxCrHgsmiDestroy(pHgsmi);
+        pHgsmi = NULL;
+    }
+#endif
 
     This->adapter_count = 1;
     return FALSE;

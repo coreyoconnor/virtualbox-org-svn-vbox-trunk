@@ -938,7 +938,7 @@ static int iomInterpretSTOS(PVM pVM, PCPUMCTXCORE pRegFrame, RTGCPHYS GCPhysFaul
     if (pCpu->fPrefix & DISPREFIX_REP)
     {
 #ifndef IN_RC
-        if (    CPUMIsGuestIn64BitCode(VMMGetCpu(pVM), pRegFrame)
+        if (    CPUMIsGuestIn64BitCode(VMMGetCpu(pVM))
             &&  pRegFrame->rcx >= _4G)
             return VINF_EM_RAW_EMULATE_INSTR;
 #endif
@@ -1520,7 +1520,7 @@ static int iomMMIOHandler(PVM pVM, uint32_t uErrorCode, PCPUMCTXCORE pCtxCore, R
     PVMCPU          pVCpu = VMMGetCpu(pVM);
     PDISCPUSTATE    pDis  = &pVCpu->iom.s.DisState;
     unsigned        cbOp;
-    rc = EMInterpretDisasOne(pVM, pVCpu, pCtxCore, pDis, &cbOp);
+    rc = EMInterpretDisasCurrent(pVM, pVCpu, pDis, &cbOp);
     if (RT_FAILURE(rc))
     {
         iomMmioReleaseRange(pVM, pRange);
@@ -2043,7 +2043,7 @@ VMMDECL(VBOXSTRICTRC) IOMInterpretINSEx(PVM pVM, PCPUMCTXCORE pRegFrame, uint32_
     if (uPrefix & DISPREFIX_REP)
     {
 #ifndef IN_RC
-        if (    CPUMIsGuestIn64BitCode(pVCpu, pRegFrame)
+        if (    CPUMIsGuestIn64BitCode(pVCpu)
             &&  pRegFrame->rcx >= _4G)
             return VINF_EM_RAW_EMULATE_INSTR;
 #endif
@@ -2205,7 +2205,7 @@ VMMDECL(VBOXSTRICTRC) IOMInterpretOUTSEx(PVM pVM, PCPUMCTXCORE pRegFrame, uint32
     if (uPrefix & DISPREFIX_REP)
     {
 #ifndef IN_RC
-        if (    CPUMIsGuestIn64BitCode(pVCpu, pRegFrame)
+        if (    CPUMIsGuestIn64BitCode(pVCpu)
             &&  pRegFrame->rcx >= _4G)
             return VINF_EM_RAW_EMULATE_INSTR;
 #endif

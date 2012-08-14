@@ -323,19 +323,15 @@ endif
 ifndef VBOX_SIGNING_MODE
  VBOX_MSI_DEPENDENCIES := $(filer-out %.cat, $(VBOX_MSI_DEPENDENCIES))
 endif
-ifdef VBOX_USE_VCC80
+ifdef VBOX_USE_VCC110
  VBOX_MSI_DEPENDENCIES := $(filter-out \
-	$(PATH_OUT)/bin/msvcrt.dll \
-	$(PATH_OUT)/bin/msvcr71.dll \
-	$(PATH_OUT)/bin/msvcp71.dll \
-	$(PATH_OUT)/bin/SDL_ttf.dll \
+	$(PATH_OUT)/bin/msvcr100.dll \
+	$(PATH_OUT)/bin/msvcp100.dll \
 	, $(VBOX_MSI_DEPENDENCIES))
 else
  VBOX_MSI_DEPENDENCIES := $(filter-out \
-	$(PATH_OUT)/bin/Microsoft.VC80.CRT/Microsoft.VC80.CRT.manifest \
-	$(PATH_OUT)/bin/Microsoft.VC80.CRT/msvcr80.dll \
-	$(PATH_OUT)/bin/Microsoft.VC80.CRT/msvcp80.dll \
-	$(PATH_OUT)/bin/Microsoft.VC80.CRT/msvcm80.dll \
+	$(PATH_OUT)/bin/msvcr110.dll \
+	$(PATH_OUT)/bin/msvcp110.dll \
 	, $(VBOX_MSI_DEPENDENCIES))
 endif
 # TODO: Add filtering out more dependencies here!
@@ -442,6 +438,7 @@ $(VBOX_WIN_INST_OUT_DIR)/VirtualBox_$(lang).wixobj: \
 		-E 'VBOX_WITH_EXTPACK=$(if $(VBOX_WITH_EXTPACK),yes,no)' \
 		-E 'VBOX_WITH_GUEST_CONTROL=$(if $(VBOX_WITH_GUEST_CONTROL),yes,no)' \
 		-E 'VBOX_WITH_GUEST_PROPS=$(if $(VBOX_WITH_GUEST_PROPS),yes,no)' \
+		-E 'VBOX_WITH_DRAG_AND_DROP=$(if $(VBOX_WITH_DRAG_AND_DROP),yes,no)' \
 		-E 'VBOX_WITH_NETFLT=$(if $(VBOX_WITH_NETFLT),yes,no)' \
 		-E 'VBOX_WITH_PYTHON=$(if $(VBOX_WITH_PYTHON),yes,no)' \
 		-E 'VBOX_WITH_QTGUI=$(if $(VBOX_WITH_QTGUI),yes,no)' \
@@ -454,7 +451,7 @@ $(VBOX_WIN_INST_OUT_DIR)/VirtualBox_$(lang).wixobj: \
 		-E 'VBOX_WINDOWS_ICON_FILE=$(subst /,\\,$(VBOX_WINDOWS_ICON_FILE))' \
 		-E 'BUILD_TYPE=$(KBUILD_TYPE)' \
 		-E 'BUILD_TARGET_ARCH=$(KBUILD_TARGET_ARCH)' \
-		-E 'VBOX_USE_VCC80=$(if $(VBOX_USE_VCC80),yes,no)' \
+		-E 'VBOX_VCC_TOOL_STEM=$(VBOX_VCC_TOOL_STEM)' \
 		-- \
 		$(VBOX_PATH_WIX)/candle.exe $(filter-out $(VBOX_VERSION_STAMP),$$<) \
 			-ext $(VBOX_PATH_WIX)/WixUIExtension.dll \

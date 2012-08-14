@@ -53,7 +53,7 @@
 /*******************************************************************************
 *   Internal Functions                                                         *
 *******************************************************************************/
-static int  hmR0SvmInterpretInvpg(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t uASID);
+static int  hmR0SvmInterpretInvlpg(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame);
 static int  hmR0SvmEmulateTprVMMCall(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx);
 static void hmR0SvmSetMSRPermission(PVMCPU pVCpu, unsigned ulMSR, bool fRead, bool fWrite);
 
@@ -108,6 +108,12 @@ VMMR0DECL(int) SVMR0EnableCpu(PHMGLOBLCPUINFO pCpu, PVM pVM, void *pvCpuPage, RT
      * to flush the TLB with before using a new ASID.
      */
     pCpu->fFlushASIDBeforeUse = true;
+
+    /*
+     * Ensure each VCPU scheduled on this CPU gets a new VPID on resume. See @bugref{6255}.
+     */
+    ++pCpu->cTLBFlushes;
+
     return VINF_SUCCESS;
 }
 
@@ -834,35 +840,35 @@ VMMR0DECL(int) SVMR0LoadGuestState(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx)
         val = pCtx->cr4;
         if (!pVM->hwaccm.s.fNestedPaging)
         {
-            switch(pVCpu->hwaccm.s.enmShadowMode)
+            switch (pVCpu->hwaccm.s.enmShadowMode)
             {
-            case PGMMODE_REAL:
-            case PGMMODE_PROTECTED:     /* Protected mode, no paging. */
-                AssertFailed();
-                return VERR_PGM_UNSUPPORTED_SHADOW_PAGING_MODE;
+                case PGMMODE_REAL:
+                case PGMMODE_PROTECTED:     /* Protected mode, no paging. */
+                    AssertFailed();
+                    return VERR_PGM_UNSUPPORTED_SHADOW_PAGING_MODE;
 
-            case PGMMODE_32_BIT:        /* 32-bit paging. */
-                val &= ~X86_CR4_PAE;
-                break;
+                case PGMMODE_32_BIT:        /* 32-bit paging. */
+                    val &= ~X86_CR4_PAE;
+                    break;
 
-            case PGMMODE_PAE:           /* PAE paging. */
-            case PGMMODE_PAE_NX:        /* PAE paging with NX enabled. */
-                /** Must use PAE paging as we could use physical memory > 4 GB */
-                val |= X86_CR4_PAE;
-                break;
+                case PGMMODE_PAE:           /* PAE paging. */
+                case PGMMODE_PAE_NX:        /* PAE paging with NX enabled. */
+                    /** Must use PAE paging as we could use physical memory > 4 GB */
+                    val |= X86_CR4_PAE;
+                    break;
 
-            case PGMMODE_AMD64:         /* 64-bit AMD paging (long mode). */
-            case PGMMODE_AMD64_NX:      /* 64-bit AMD paging (long mode) with NX enabled. */
+                case PGMMODE_AMD64:         /* 64-bit AMD paging (long mode). */
+                case PGMMODE_AMD64_NX:      /* 64-bit AMD paging (long mode) with NX enabled. */
 #ifdef VBOX_ENABLE_64_BITS_GUESTS
-                break;
+                    break;
 #else
-                AssertFailed();
-                return VERR_PGM_UNSUPPORTED_SHADOW_PAGING_MODE;
+                    AssertFailed();
+                    return VERR_PGM_UNSUPPORTED_SHADOW_PAGING_MODE;
 #endif
 
-            default:                    /* shut up gcc */
-                AssertFailed();
-                return VERR_PGM_UNSUPPORTED_SHADOW_PAGING_MODE;
+                default:                    /* shut up gcc */
+                    AssertFailed();
+                    return VERR_PGM_UNSUPPORTED_SHADOW_PAGING_MODE;
             }
         }
         pVMCB->guest.u64CR4 = val;
@@ -1171,6 +1177,7 @@ VMMR0DECL(int) SVMR0RunGuestCode(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx)
     bool        fSyncTPR    = false;
     unsigned    cResume     = 0;
     uint8_t     u8LastTPR   = 0; /* Initialized for potentially stupid compilers. */
+    uint32_t    u32HostExtFeatures = 0;
     PHMGLOBLCPUINFO pCpu    = 0;
     RTCCUINTREG uOldEFlags  = ~(RTCCUINTREG)0;
 #ifdef VBOX_STRICT
@@ -1373,7 +1380,7 @@ ResumeExecution:
             else
             {
                 /*
-                 * No interrupts are pending, so we don't need to be explicitely notified.
+                 * No interrupts are pending, so we don't need to be explicitly notified.
                  * There are enough world switches for detecting pending interrupts.
                  */
                 pVMCB->ctrl.u16InterceptWrCRx &= ~RT_BIT(8);
@@ -1389,20 +1396,10 @@ ResumeExecution:
 
 #ifdef LOG_ENABLED
     pCpu = HWACCMR0GetCurrentCpu();
-    if (    pVCpu->hwaccm.s.idLastCpu   != pCpu->idCpu
-        ||  pVCpu->hwaccm.s.cTLBFlushes != pCpu->cTLBFlushes)
-    {
-        if (pVCpu->hwaccm.s.idLastCpu != pCpu->idCpu)
-        {
-            LogFlow(("Force TLB flush due to rescheduling to a different cpu (%d vs %d)\n", pVCpu->hwaccm.s.idLastCpu,
-                     pCpu->idCpu));
-        }
-        else
-        {
-            LogFlow(("Force TLB flush due to changed TLB flush count (%x vs %x)\n", pVCpu->hwaccm.s.cTLBFlushes,
-                     pCpu->cTLBFlushes));
-        }
-    }
+    if (pVCpu->hwaccm.s.idLastCpu != pCpu->idCpu)
+        LogFlow(("Force TLB flush due to rescheduling to a different cpu (%d vs %d)\n", pVCpu->hwaccm.s.idLastCpu, pCpu->idCpu));
+    else if (pVCpu->hwaccm.s.cTLBFlushes != pCpu->cTLBFlushes)
+        LogFlow(("Force TLB flush due to changed TLB flush count (%x vs %x)\n", pVCpu->hwaccm.s.cTLBFlushes, pCpu->cTLBFlushes));
     else if (VMCPU_FF_ISSET(pVCpu, VMCPU_FF_TLB_FLUSH))
         LogFlow(("Manual TLB flush\n"));
 #endif
@@ -1453,6 +1450,22 @@ ResumeExecution:
     Assert(idCpuCheck == RTMpCpuId());
 #endif
     TMNotifyStartOfExecution(pVCpu);
+
+    /*
+     * Save the current Host TSC_AUX and write the guest TSC_AUX to the host, so that
+     * RDTSCPs (that don't cause exits) reads the guest MSR. See @bugref{3324}.
+     */
+    u32HostExtFeatures = ASMCpuId_EDX(0x80000001);  /** @todo Move this elsewhere, not needed on every world switch */
+    if (    (u32HostExtFeatures & X86_CPUID_EXT_FEATURE_EDX_RDTSCP)
+        && !(pVMCB->ctrl.u32InterceptCtrl2 & SVM_CTRL2_INTERCEPT_RDTSCP))
+    {
+        pVCpu->hwaccm.s.u64HostTSCAux = ASMRdMsr(MSR_K8_TSC_AUX);
+        uint64_t u64GuestTSCAux = 0;
+        rc2 = CPUMQueryGuestMsr(pVCpu, MSR_K8_TSC_AUX, &u64GuestTSCAux);
+        AssertRC(rc2);
+        ASMWrMsr(MSR_K8_TSC_AUX, u64GuestTSCAux);
+    }
+
 #ifdef VBOX_WITH_KERNEL_USING_XMM
     hwaccmR0SVMRunWrapXMM(pVCpu->hwaccm.s.svm.pVMCBHostPhys, pVCpu->hwaccm.s.svm.pVMCBPhys, pCtx, pVM, pVCpu,
                           pVCpu->hwaccm.s.svm.pfnVMRun);
@@ -1464,6 +1477,10 @@ ResumeExecution:
     /* Possibly the last TSC value seen by the guest (too high) (only when we're in TSC offset mode). */
     if (!(pVMCB->ctrl.u32InterceptCtrl1 & SVM_CTRL1_INTERCEPT_RDTSC))
     {
+        /* Restore host's TSC_AUX. */
+        if (u32HostExtFeatures & X86_CPUID_EXT_FEATURE_EDX_RDTSCP)
+            ASMWrMsr(MSR_K8_TSC_AUX, pVCpu->hwaccm.s.u64HostTSCAux);
+
         TMCpuTickSetLastSeen(pVCpu, ASMReadTSC() +
                              pVMCB->ctrl.u64TSCOffset - 0x400 /* guestimate of world switch overhead in clock ticks */);
     }
@@ -1601,7 +1618,6 @@ ResumeExecution:
         Log(("guest.u64BR_TO                    %RX64\n",   pVMCB->guest.u64BR_TO));
         Log(("guest.u64LASTEXCPFROM             %RX64\n",   pVMCB->guest.u64LASTEXCPFROM));
         Log(("guest.u64LASTEXCPTO               %RX64\n",   pVMCB->guest.u64LASTEXCPTO));
-
 #endif
         rc = VERR_SVM_UNABLE_TO_START_VM;
         VMMR0LogFlushEnable(pVCpu);
@@ -1688,7 +1704,7 @@ ResumeExecution:
 
     /*
      * No reason to sync back the CRx and DRx registers as they cannot be changed by the guest
-     * unless in the nested paging case where CR3 & CR3 can be changed by the guest.
+     * unless in the nested paging case where CR3 can be changed by the guest.
      */
     if (   pVM->hwaccm.s.fNestedPaging
         && pCtx->cr3 != pVMCB->guest.u64CR3)
@@ -2231,15 +2247,15 @@ ResumeExecution:
         break;
     }
 
-    case SVM_EXIT_INVLPG:               /* Guest software attempted to execute INVPG. */
+    case SVM_EXIT_INVLPG:               /* Guest software attempted to execute INVLPG. */
     {
         Log2(("SVM: invlpg\n"));
-        STAM_COUNTER_INC(&pVCpu->hwaccm.s.StatExitInvpg);
+        STAM_COUNTER_INC(&pVCpu->hwaccm.s.StatExitInvlpg);
 
         Assert(!pVM->hwaccm.s.fNestedPaging);
 
         /* Truly a pita. Why can't SVM give the same information as VT-x? */
-        rc = hmR0SvmInterpretInvpg(pVM, pVCpu, CPUMCTX2CORE(pCtx), pVMCB->ctrl.TLBCtrl.n.u32ASID);
+        rc = hmR0SvmInterpretInvlpg(pVM, pVCpu, CPUMCTX2CORE(pCtx));
         if (rc == VINF_SUCCESS)
         {
             STAM_COUNTER_INC(&pVCpu->hwaccm.s.StatFlushPageInvlpg);
@@ -2410,20 +2426,22 @@ ResumeExecution:
             PDISCPUSTATE pDis = &pVCpu->hwaccm.s.DisState;
 
             /* Disassemble manually to deal with segment prefixes. */
-            rc = EMInterpretDisasOne(pVM, pVCpu, CPUMCTX2CORE(pCtx), pDis, NULL);
+            rc = EMInterpretDisasCurrent(pVM, pVCpu, pDis, NULL);
             if (rc == VINF_SUCCESS)
             {
                 if (IoExitInfo.n.u1Type == 0)
                 {
                     Log2(("IOMInterpretOUTSEx %RGv %x size=%d\n", (RTGCPTR)pCtx->rip, IoExitInfo.n.u16Port, uIOSize));
                     STAM_COUNTER_INC(&pVCpu->hwaccm.s.StatExitIOStringWrite);
-                    rc = IOMInterpretOUTSEx(pVM, CPUMCTX2CORE(pCtx), IoExitInfo.n.u16Port, pDis->fPrefix, (DISCPUMODE)pDis->uAddrMode, uIOSize);
+                    rc = IOMInterpretOUTSEx(pVM, CPUMCTX2CORE(pCtx), IoExitInfo.n.u16Port, pDis->fPrefix,
+                                            (DISCPUMODE)pDis->uAddrMode, uIOSize);
                 }
                 else
                 {
                     Log2(("IOMInterpretINSEx  %RGv %x size=%d\n", (RTGCPTR)pCtx->rip, IoExitInfo.n.u16Port, uIOSize));
                     STAM_COUNTER_INC(&pVCpu->hwaccm.s.StatExitIOStringRead);
-                    rc = IOMInterpretINSEx(pVM, CPUMCTX2CORE(pCtx), IoExitInfo.n.u16Port, pDis->fPrefix, (DISCPUMODE)pDis->uAddrMode, uIOSize);
+                    rc = IOMInterpretINSEx(pVM, CPUMCTX2CORE(pCtx), IoExitInfo.n.u16Port, pDis->fPrefix,
+                                           (DISCPUMODE)pDis->uAddrMode, uIOSize);
                 }
             }
             else
@@ -2908,19 +2926,17 @@ VMMR0DECL(int) SVMR0Leave(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx)
 
 
 /**
- * Interprets INVLPG.
+ * Worker for Interprets INVLPG.
  *
  * @return VBox status code.
  * @param   pVCpu           Pointer to the VMCPU.
  * @param   pCpu            Pointer to the CPU info struct.
  * @param   pRegFrame       Pointer to the register frame.
- * @param   ASID            Tagged TLB id for the guest.
  */
-static int hmR0svmInterpretInvlPg(PVMCPU pVCpu, PDISCPUSTATE pCpu, PCPUMCTXCORE pRegFrame, uint32_t uASID)
+static int hmR0svmInterpretInvlPgEx(PVMCPU pVCpu, PDISCPUSTATE pCpu, PCPUMCTXCORE pRegFrame)
 {
     DISQPVPARAMVAL param1;
     RTGCPTR     addr;
-    NOREF(uASID);
 
     int rc = DISQueryParamVal(pRegFrame, pCpu, &pCpu->Param1, &param1, DISQPVWHICH_SRC);
     if (RT_FAILURE(rc))
@@ -2961,23 +2977,21 @@ static int hmR0svmInterpretInvlPg(PVMCPU pVCpu, PDISCPUSTATE pCpu, PCPUMCTXCORE 
  *
  * @param   pVM         Pointer to the VM.
  * @param   pRegFrame   Pointer to the register frame.
- * @param   ASID        Tagged TLB id for the guest.
  *
  * @remarks Updates the EIP if an instruction was executed successfully.
  */
-static int hmR0SvmInterpretInvpg(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t uASID)
+static int hmR0SvmInterpretInvlpg(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame)
 {
     /*
      * Only allow 32 & 64 bit code.
      */
-    DISCPUMODE enmMode = SELMGetCpuModeFromSelector(pVCpu, pRegFrame->eflags, pRegFrame->cs.Sel, &pRegFrame->cs);
-    if (enmMode != DISCPUMODE_16BIT)
+    if (CPUMGetGuestCodeBits(pVCpu) != 16)
     {
         PDISSTATE pDis = &pVCpu->hwaccm.s.DisState;
-        int rc = EMInterpretDisasOne(pVM, pVCpu, pRegFrame, pDis, NULL);
+        int rc = EMInterpretDisasCurrent(pVM, pVCpu, pDis, NULL);
         if (RT_SUCCESS(rc) && pDis->pCurInstr->uOpcode == OP_INVLPG)
         {
-            rc = hmR0svmInterpretInvlPg(pVCpu, pDis, pRegFrame, uASID);
+            rc = hmR0svmInterpretInvlPgEx(pVCpu, pDis, pRegFrame);
             if (RT_SUCCESS(rc))
                 pRegFrame->rip += pDis->cbInstr; /* Move on to the next instruction. */
             return rc;

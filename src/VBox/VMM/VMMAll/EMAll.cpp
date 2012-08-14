@@ -200,7 +200,7 @@ VMM_INT_DECL(bool) EMShouldContinueAfterHalt(PVMCPU pVCpu, PCPUMCTX pCtx)
 
 
 /**
- * Locks REM execution to a single VCpu
+ * Locks REM execution to a single VCPU.
  *
  * @param   pVM         Pointer to the VM.
  */
@@ -364,7 +364,7 @@ DECLINLINE(int) emDisCoreOne(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, RTGCUINTP
 
 
 /**
- * Disassembles one instruction.
+ * Disassembles the current instruction.
  *
  * @returns VBox status code, see SELMToFlatEx and EMInterpretDisasOneEx for
  *          details.
@@ -372,19 +372,19 @@ DECLINLINE(int) emDisCoreOne(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, RTGCUINTP
  *
  * @param   pVM             Pointer to the VM.
  * @param   pVCpu           Pointer to the VMCPU.
- * @param   pCtxCore        The context core (used for both the mode and instruction).
  * @param   pDis            Where to return the parsed instruction info.
  * @param   pcbInstr        Where to return the instruction size. (optional)
  */
-VMMDECL(int) EMInterpretDisasOne(PVM pVM, PVMCPU pVCpu, PCCPUMCTXCORE pCtxCore, PDISCPUSTATE pDis, unsigned *pcbInstr)
+VMMDECL(int) EMInterpretDisasCurrent(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, unsigned *pcbInstr)
 {
+    PCPUMCTXCORE pCtxCore = CPUMCTX2CORE(CPUMQueryGuestCtxPtr(pVCpu));
     RTGCPTR GCPtrInstr;
 #if 0
     int rc = SELMToFlatEx(pVCpu, DISSELREG_CS, pCtxCore, pCtxCore->rip, 0, &GCPtrInstr);
 #else
 /** @todo Get the CPU mode as well while we're at it! */
-    int rc = SELMValidateAndConvertCSAddr(pVCpu, pCtxCore->eflags, pCtxCore->ss.Sel, pCtxCore->cs.Sel,
-                                          &pCtxCore->cs, pCtxCore->rip, &GCPtrInstr);
+    int rc = SELMValidateAndConvertCSAddr(pVCpu, pCtxCore->eflags, pCtxCore->ss.Sel, pCtxCore->cs.Sel, &pCtxCore->cs,
+                                          pCtxCore->rip, &GCPtrInstr);
 #endif
     if (RT_FAILURE(rc))
     {
@@ -414,7 +414,8 @@ VMMDECL(int) EMInterpretDisasOne(PVM pVM, PVMCPU pVCpu, PCCPUMCTXCORE pCtxCore, 
 VMMDECL(int) EMInterpretDisasOneEx(PVM pVM, PVMCPU pVCpu, RTGCUINTPTR GCPtrInstr, PCCPUMCTXCORE pCtxCore,
                                    PDISCPUSTATE pDis, unsigned *pcbInstr)
 {
-    DISCPUMODE enmCpuMode = SELMGetCpuModeFromSelector(pVCpu, pCtxCore->eflags, pCtxCore->cs.Sel, (PCPUMSELREGHID)&pCtxCore->cs);
+    Assert(pCtxCore == CPUMGetGuestCtxCore(pVCpu));
+    DISCPUMODE enmCpuMode = CPUMGetGuestDisMode(pVCpu);
     /** @todo Deal with too long instruction (=> \#GP), opcode read errors (=>
      *        \#PF, \#GP, \#??), undefined opcodes (=> \#UD), and such. */
     int rc = DISInstrWithReader(GCPtrInstr, enmCpuMode, emReadBytes, pVCpu, pDis, pcbInstr);
@@ -461,7 +462,7 @@ VMMDECL(VBOXSTRICTRC) EMInterpretInstruction(PVMCPU pVCpu, PCPUMCTXCORE pRegFram
     {
         uint32_t     cbOp;
         PDISCPUSTATE pDis = &pVCpu->em.s.DisState;
-        pDis->uCpuMode = SELMGetCpuModeFromSelector(pVCpu, pRegFrame->eflags, pRegFrame->cs.Sel, &pRegFrame->cs);
+        pDis->uCpuMode = CPUMGetGuestDisMode(pVCpu);
         rc = emDisCoreOne(pVCpu->CTX_SUFF(pVM), pVCpu, pDis, (RTGCUINTPTR)pbCode, &cbOp);
         if (RT_SUCCESS(rc))
         {
@@ -516,7 +517,7 @@ VMMDECL(VBOXSTRICTRC) EMInterpretInstructionEx(PVMCPU pVCpu, PCPUMCTXCORE pRegFr
     {
         uint32_t     cbOp;
         PDISCPUSTATE pDis = &pVCpu->em.s.DisState;
-        pDis->uCpuMode = SELMGetCpuModeFromSelector(pVCpu, pRegFrame->eflags, pRegFrame->cs.Sel, &pRegFrame->cs);
+        pDis->uCpuMode = CPUMGetGuestDisMode(pVCpu);
         rc = emDisCoreOne(pVCpu->CTX_SUFF(pVM), pVCpu, pDis, (RTGCUINTPTR)pbCode, &cbOp);
         if (RT_SUCCESS(rc))
         {
@@ -609,7 +610,7 @@ VMMDECL(int) EMInterpretIretV86ForPatm(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegF
     int         rc;
 
     Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
-    Assert(!CPUMIsGuestIn64BitCode(pVCpu, pRegFrame));
+    Assert(!CPUMIsGuestIn64BitCode(pVCpu));
     /** @todo Rainy day: Test what happens when VERR_EM_INTERPRETER is returned by
      *        this function.  Fear that it may guru on us, thus not converted to
      *        IEM. */
@@ -664,7 +665,7 @@ VMMDECL(int) EMInterpretIretV86ForPatm(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegF
 
 
 /**
- * Interpret CPUID given the parameters in the CPU context
+ * Interpret CPUID given the parameters in the CPU context.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
@@ -692,7 +693,7 @@ VMMDECL(int) EMInterpretCpuId(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame)
 
 
 /**
- * Interpret RDTSC
+ * Interpret RDTSC.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
@@ -719,7 +720,7 @@ VMMDECL(int) EMInterpretRdtsc(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame)
 }
 
 /**
- * Interpret RDTSCP
+ * Interpret RDTSCP.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
@@ -754,7 +755,7 @@ VMMDECL(int) EMInterpretRdtscp(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx)
 }
 
 /**
- * Interpret RDPMC
+ * Interpret RDPMC.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
@@ -778,7 +779,8 @@ VMMDECL(int) EMInterpretRdpmc(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame)
     /* Just return zero here; rather tricky to properly emulate this, especially as the specs are a mess. */
     pRegFrame->rax = 0;
     pRegFrame->rdx = 0;
-    /** @todo We should trigger a #GP here if the cpu doesn't support the index in ecx. */
+    /** @todo We should trigger a #GP here if the CPU doesn't support the index in ecx
+     *        but see @bugref{3472}! */
 
     NOREF(pVM);
     return VINF_SUCCESS;
@@ -853,17 +855,16 @@ VMMDECL(int) EMInterpretMonitor(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame)
 }
 
 
-
 /* VT-x only: */
 
 /**
- * Interpret INVLPG
+ * Interpret INVLPG.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
  * @param   pVCpu       Pointer to the VMCPU.
  * @param   pRegFrame   The register frame.
- * @param   pAddrGC     Operand address
+ * @param   pAddrGC     Operand address.
  *
  */
 VMMDECL(VBOXSTRICTRC) EMInterpretInvlpg(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, RTGCPTR pAddrGC)
@@ -888,7 +889,7 @@ VMMDECL(VBOXSTRICTRC) EMInterpretInvlpg(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pReg
 
 
 /**
- * Update CRx
+ * Update CRx.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
@@ -1029,7 +1030,7 @@ static int emUpdateCRx(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t D
 
 
 /**
- * Interpret CRx write
+ * Interpret CRx write.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
@@ -1045,10 +1046,8 @@ VMMDECL(int) EMInterpretCRxWrite(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, 
     int      rc;
     Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
 
-    if (CPUMIsGuestIn64BitCode(pVCpu, pRegFrame))
-    {
+    if (CPUMIsGuestIn64BitCode(pVCpu))
         rc = DISFetchReg64(pRegFrame, SrcRegGen, &val);
-    }
     else
     {
         uint32_t val32;
@@ -1063,7 +1062,7 @@ VMMDECL(int) EMInterpretCRxWrite(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, 
 }
 
 /**
- * Interpret LMSW
+ * Interpret LMSW.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
@@ -1085,9 +1084,8 @@ VMMDECL(int) EMInterpretLMSW(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint
 }
 
 
-
 /**
- * Interpret CLTS
+ * Interpret CLTS.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
@@ -1106,7 +1104,7 @@ VMMDECL(int) EMInterpretCLTS(PVM pVM, PVMCPU pVCpu)
 
 
 /**
- * Interpret CRx read
+ * Interpret CRx read.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
@@ -1124,7 +1122,7 @@ VMMDECL(int) EMInterpretCRxRead(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, u
     AssertMsgRCReturn(rc, ("CPUMGetGuestCRx %d failed\n", SrcRegCrx), VERR_EM_INTERPRETER);
     NOREF(pVM);
 
-    if (CPUMIsGuestIn64BitCode(pVCpu, pRegFrame))
+    if (CPUMIsGuestIn64BitCode(pVCpu))
         rc = DISWriteReg64(pRegFrame, DestRegGen, val64);
     else
         rc = DISWriteReg32(pRegFrame, DestRegGen, val64);
@@ -1139,7 +1137,7 @@ VMMDECL(int) EMInterpretCRxRead(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, u
 
 
 /**
- * Interpret DRx write
+ * Interpret DRx write.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
@@ -1156,10 +1154,8 @@ VMMDECL(int) EMInterpretDRxWrite(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, 
     int      rc;
     NOREF(pVM);
 
-    if (CPUMIsGuestIn64BitCode(pVCpu, pRegFrame))
-    {
+    if (CPUMIsGuestIn64BitCode(pVCpu))
         rc = DISFetchReg64(pRegFrame, SrcRegGen, &val);
-    }
     else
     {
         uint32_t val32;
@@ -1180,7 +1176,7 @@ VMMDECL(int) EMInterpretDRxWrite(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, 
 
 
 /**
- * Interpret DRx read
+ * Interpret DRx read.
  *
  * @returns VBox status code.
  * @param   pVM         Pointer to the VM.
@@ -1198,10 +1194,8 @@ VMMDECL(int) EMInterpretDRxRead(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, u
 
     int rc = CPUMGetGuestDRx(pVCpu, SrcRegDrx, &val64);
     AssertMsgRCReturn(rc, ("CPUMGetGuestDRx %d failed\n", SrcRegDrx), VERR_EM_INTERPRETER);
-    if (CPUMIsGuestIn64BitCode(pVCpu, pRegFrame))
-    {
+    if (CPUMIsGuestIn64BitCode(pVCpu))
         rc = DISWriteReg64(pRegFrame, DestRegGen, val64);
-    }
     else
         rc = DISWriteReg32(pRegFrame, DestRegGen, (uint32_t)val64);
 
@@ -1552,7 +1546,7 @@ static int emInterpretPop(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCORE
             RTGCPTR pStackVal;
 
             /* Read stack value first */
-            if (SELMGetCpuModeFromSelector(pVCpu, pRegFrame->eflags, pRegFrame->ss.Sel, &pRegFrame->ss) == DISCPUMODE_16BIT)
+            if (CPUMGetGuestCodeBits(pVCpu) == 16)
                 return VERR_EM_INTERPRETER; /* No legacy 16 bits stuff here, please. */
 
             /* Convert address; don't bother checking limits etc, as we only read here */
@@ -3080,6 +3074,7 @@ static int emInterpretWrmsr(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCO
 DECLINLINE(VBOXSTRICTRC) emInterpretInstructionCPU(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCORE pRegFrame,
                                                    RTGCPTR pvFault, EMCODETYPE enmCodeType, uint32_t *pcbSize)
 {
+    Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
     Assert(enmCodeType == EMCODETYPE_SUPERVISOR || enmCodeType == EMCODETYPE_ALL);
     Assert(pcbSize);
     *pcbSize = 0;
@@ -3142,7 +3137,7 @@ DECLINLINE(VBOXSTRICTRC) emInterpretInstructionCPU(PVM pVM, PVMCPU pVCpu, PDISCP
      * Whitelisted instructions are safe.
      */
     if (    pDis->Param1.cb > 4
-        &&  CPUMIsGuestIn64BitCode(pVCpu, pRegFrame))
+        &&  CPUMIsGuestIn64BitCode(pVCpu))
     {
         uint32_t uOpCode = pDis->pCurInstr->uOpcode;
         if (    uOpCode != OP_STOSWD

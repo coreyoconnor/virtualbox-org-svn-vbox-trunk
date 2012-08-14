@@ -33,10 +33,25 @@ enum UIActionIndexSelector
     UIActionIndexSelector_Simple_File_PreferencesDialog,
     UIActionIndexSelector_Simple_File_Exit,
 
+    /* 'Group' menu actions: */
+    UIActionIndexSelector_Menu_Group,
+    UIActionIndexSelector_Simple_Group_NewWizard,
+    UIActionIndexSelector_Simple_Group_AddDialog,
+    UIActionIndexSelector_Simple_Group_RenameDialog,
+    UIActionIndexSelector_Simple_Group_RemoveDialog,
+    UIActionIndexSelector_State_Group_StartOrShow,
+    UIActionIndexSelector_Toggle_Group_PauseAndResume,
+    UIActionIndexSelector_Simple_Group_Reset,
+    UIActionIndexSelector_Simple_Group_Refresh,
+    UIActionIndexSelector_Simple_Group_ShowInFileManager,
+    UIActionIndexSelector_Simple_Group_CreateShortcut,
+    UIActionIndexSelector_Simple_Group_Sort,
+
     /* 'Machine' menu actions: */
     UIActionIndexSelector_Menu_Machine,
     UIActionIndexSelector_Simple_Machine_NewWizard,
     UIActionIndexSelector_Simple_Machine_AddDialog,
+    UIActionIndexSelector_Simple_Machine_AddGroupDialog,
     UIActionIndexSelector_Simple_Machine_SettingsDialog,
     UIActionIndexSelector_Simple_Machine_CloneWizard,
     UIActionIndexSelector_Simple_Machine_RemoveDialog,
@@ -47,7 +62,9 @@ enum UIActionIndexSelector
     UIActionIndexSelector_Simple_Machine_Refresh,
     UIActionIndexSelector_Simple_Machine_ShowInFileManager,
     UIActionIndexSelector_Simple_Machine_CreateShortcut,
-    UIActionIndexSelector_Simple_Machine_Sort,
+
+    /* Common menu action: */
+    UIActionIndexSelector_Simple_Common_SortParent,
 
     /* 'Machine/Close' menu actions: */
     UIActionIndexSelector_Menu_Machine_Close,

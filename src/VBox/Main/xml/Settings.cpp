@@ -16,6 +16,9 @@
  * highest value to see which code in here needs adjusting.
  *
  * Certainly ConfigFileBase::ConfigFileBase() will. Change VBOX_XML_VERSION below as well.
+ * VBOX_XML_VERSION does not have to be changed if the settings for a default VM do not
+ * touch newly introduced attributes or tags. It has the benefit that older VirtualBox
+ * versions do not trigger their "newer" code path.
  *
  * Once a new settings version has been added, these are the rules for introducing a new
  * setting: If an XML element or attribute or value is introduced that was not present in
@@ -322,7 +325,9 @@ ConfigFileBase::ConfigFileBase(const com::Utf8Str *pstrFilename)
                     m->sv = SettingsVersion_v1_11;
                 else if (ulMinor == 12)
                     m->sv = SettingsVersion_v1_12;
-                else if (ulMinor > 12)
+                else if (ulMinor == 13)
+                    m->sv = SettingsVersion_v1_13;
+                else if (ulMinor > 13)
                     m->sv = SettingsVersion_Future;
             }
             else if (ulMajor > 1)
@@ -1288,6 +1293,7 @@ MainConfigFile::MainConfigFile(const Utf8Str *pstrFilename)
                         pelmGlobalChild->getAttributeValue("webServiceAuthLibrary", systemProperties.strWebServiceAuthLibrary);
                         pelmGlobalChild->getAttributeValue("defaultVRDEExtPack", systemProperties.strDefaultVRDEExtPack);
                         pelmGlobalChild->getAttributeValue("LogHistoryCount", systemProperties.ulLogHistoryCount);
+                        pelmGlobalChild->getAttributeValue("autostartDatabasePath", systemProperties.strAutostartDatabasePath);
                     }
                     else if (pelmGlobalChild->nameEquals("ExtraData"))
                         readExtraData(*pelmGlobalChild, mapExtraDataItems);
@@ -1398,6 +1404,8 @@ void MainConfigFile::write(const com::Utf8Str strFilename)
     if (systemProperties.strDefaultVRDEExtPack.length())
         pelmSysProps->setAttribute("defaultVRDEExtPack", systemProperties.strDefaultVRDEExtPack);
     pelmSysProps->setAttribute("LogHistoryCount", systemProperties.ulLogHistoryCount);
+    if (systemProperties.strAutostartDatabasePath.length())
+        pelmSysProps->setAttribute("autostartDatabasePath", systemProperties.strAutostartDatabasePath);
 
     buildUSBDeviceFilters(*pelmGlobal->createChild("USBDeviceFilters"),
                           host.llUSBDeviceFilters,
@@ -1594,7 +1602,7 @@ Hardware::Hardware()
           fPAE(false),
           cCPUs(1),
           fCpuHotPlug(false),
-          fHpetEnabled(false),
+          fHPETEnabled(false),
           ulCpuExecutionCap(100),
           ulMemorySizeMB((uint32_t)-1),
           ulVRAMSizeMB(8),
@@ -1602,11 +1610,12 @@ Hardware::Hardware()
           fAccelerate3D(false),
           fAccelerate2DVideo(false),
           firmwareType(FirmwareType_BIOS),
-          pointingHidType(PointingHidType_PS2Mouse),
-          keyboardHidType(KeyboardHidType_PS2Keyboard),
+          pointingHIDType(PointingHIDType_PS2Mouse),
+          keyboardHIDType(KeyboardHIDType_PS2Keyboard),
           chipsetType(ChipsetType_PIIX3),
           fEmulatedUSBCardReader(false),
-          clipboardMode(ClipboardMode_Bidirectional),
+          clipboardMode(ClipboardMode_Disabled),
+          dragAndDropMode(DragAndDropMode_Disabled),
           ulMemoryBalloonSize(0),
           fPageFusionEnabled(false)
 {
@@ -1655,7 +1664,7 @@ bool Hardware::operator==(const Hardware& h) const
                   && (cCPUs                     == h.cCPUs)
                   && (fCpuHotPlug               == h.fCpuHotPlug)
                   && (ulCpuExecutionCap         == h.ulCpuExecutionCap)
-                  && (fHpetEnabled              == h.fHpetEnabled)
+                  && (fHPETEnabled              == h.fHPETEnabled)
                   && (llCpus                    == h.llCpus)
                   && (llCpuIdLeafs              == h.llCpuIdLeafs)
                   && (ulMemorySizeMB            == h.ulMemorySizeMB)
@@ -1665,8 +1674,8 @@ bool Hardware::operator==(const Hardware& h) const
                   && (fAccelerate3D             == h.fAccelerate3D)
                   && (fAccelerate2DVideo        == h.fAccelerate2DVideo)
                   && (firmwareType              == h.firmwareType)
-                  && (pointingHidType           == h.pointingHidType)
-                  && (keyboardHidType           == h.keyboardHidType)
+                  && (pointingHIDType           == h.pointingHIDType)
+                  && (keyboardHIDType           == h.keyboardHIDType)
                   && (chipsetType               == h.chipsetType)
                   && (fEmulatedUSBCardReader    == h.fEmulatedUSBCardReader)
                   && (vrdeSettings              == h.vrdeSettings)
@@ -1678,6 +1687,7 @@ bool Hardware::operator==(const Hardware& h) const
                   && (audioAdapter              == h.audioAdapter)
                   && (llSharedFolders           == h.llSharedFolders)
                   && (clipboardMode             == h.clipboardMode)
+                  && (dragAndDropMode           == h.dragAndDropMode)
                   && (ulMemoryBalloonSize       == h.ulMemoryBalloonSize)
                   && (fPageFusionEnabled        == h.fPageFusionEnabled)
                   && (llGuestProperties         == h.llGuestProperties)
@@ -1768,12 +1778,12 @@ bool Snapshot::operator==(const Snapshot &s) const
 }
 
 /**
- * IoSettings constructor.
+ * IOSettings constructor.
  */
-IoSettings::IoSettings()
+IOSettings::IOSettings()
 {
-    fIoCacheEnabled  = true;
-    ulIoCacheSize    = 5;
+    fIOCacheEnabled  = true;
+    ulIOCacheSize    = 5;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2036,9 +2046,9 @@ void MachineConfigFile::readAttachedNetworkMode(const xml::ElementNode &elmMode,
         const xml::ElementNode *pelmDNS;
         if ((pelmDNS = elmMode.findChildElement("DNS")))
         {
-            pelmDNS->getAttributeValue("pass-domain", nic.nat.fDnsPassDomain);
-            pelmDNS->getAttributeValue("use-proxy", nic.nat.fDnsProxy);
-            pelmDNS->getAttributeValue("use-host-resolver", nic.nat.fDnsUseHostResolver);
+            pelmDNS->getAttributeValue("pass-domain", nic.nat.fDNSPassDomain);
+            pelmDNS->getAttributeValue("use-proxy", nic.nat.fDNSProxy);
+            pelmDNS->getAttributeValue("use-host-resolver", nic.nat.fDNSUseHostResolver);
         }
         const xml::ElementNode *pelmAlias;
         if ((pelmAlias = elmMode.findChildElement("Alias")))
@@ -2050,9 +2060,9 @@ void MachineConfigFile::readAttachedNetworkMode(const xml::ElementNode &elmMode,
         const xml::ElementNode *pelmTFTP;
         if ((pelmTFTP = elmMode.findChildElement("TFTP")))
         {
-            pelmTFTP->getAttributeValue("prefix", nic.nat.strTftpPrefix);
-            pelmTFTP->getAttributeValue("boot-file", nic.nat.strTftpBootFile);
-            pelmTFTP->getAttributeValue("next-server", nic.nat.strTftpNextServer);
+            pelmTFTP->getAttributeValue("prefix", nic.nat.strTFTPPrefix);
+            pelmTFTP->getAttributeValue("boot-file", nic.nat.strTFTPBootFile);
+            pelmTFTP->getAttributeValue("next-server", nic.nat.strTFTPNextServer);
         }
         xml::ElementNodesList plstNatPF;
         elmMode.getChildElements(plstNatPF, "Forwarding");
@@ -2434,40 +2444,40 @@ void MachineConfigFile::readHardware(const xml::ElementNode &elmHardware,
         }
         else if (pelmHwChild->nameEquals("HID"))
         {
-            Utf8Str strHidType;
-            if (pelmHwChild->getAttributeValue("Keyboard", strHidType))
+            Utf8Str strHIDType;
+            if (pelmHwChild->getAttributeValue("Keyboard", strHIDType))
             {
-                if (strHidType == "None")
-                    hw.keyboardHidType = KeyboardHidType_None;
-                else if (strHidType == "USBKeyboard")
-                    hw.keyboardHidType = KeyboardHidType_USBKeyboard;
-                else if (strHidType == "PS2Keyboard")
-                    hw.keyboardHidType = KeyboardHidType_PS2Keyboard;
-                else if (strHidType == "ComboKeyboard")
-                    hw.keyboardHidType = KeyboardHidType_ComboKeyboard;
+                if (strHIDType == "None")
+                    hw.keyboardHIDType = KeyboardHIDType_None;
+                else if (strHIDType == "USBKeyboard")
+                    hw.keyboardHIDType = KeyboardHIDType_USBKeyboard;
+                else if (strHIDType == "PS2Keyboard")
+                    hw.keyboardHIDType = KeyboardHIDType_PS2Keyboard;
+                else if (strHIDType == "ComboKeyboard")
+                    hw.keyboardHIDType = KeyboardHIDType_ComboKeyboard;
                 else
                     throw ConfigFileError(this,
                                           pelmHwChild,
                                           N_("Invalid value '%s' in HID/Keyboard/@type"),
-                                          strHidType.c_str());
+                                          strHIDType.c_str());
             }
-            if (pelmHwChild->getAttributeValue("Pointing", strHidType))
+            if (pelmHwChild->getAttributeValue("Pointing", strHIDType))
             {
-                 if (strHidType == "None")
-                    hw.pointingHidType = PointingHidType_None;
-                else if (strHidType == "USBMouse")
-                    hw.pointingHidType = PointingHidType_USBMouse;
-                else if (strHidType == "USBTablet")
-                    hw.pointingHidType = PointingHidType_USBTablet;
-                else if (strHidType == "PS2Mouse")
-                    hw.pointingHidType = PointingHidType_PS2Mouse;
-                else if (strHidType == "ComboMouse")
-                    hw.pointingHidType = PointingHidType_ComboMouse;
+                 if (strHIDType == "None")
+                    hw.pointingHIDType = PointingHIDType_None;
+                else if (strHIDType == "USBMouse")
+                    hw.pointingHIDType = PointingHIDType_USBMouse;
+                else if (strHIDType == "USBTablet")
+                    hw.pointingHIDType = PointingHIDType_USBTablet;
+                else if (strHIDType == "PS2Mouse")
+                    hw.pointingHIDType = PointingHIDType_PS2Mouse;
+                else if (strHIDType == "ComboMouse")
+                    hw.pointingHIDType = PointingHIDType_ComboMouse;
                 else
                     throw ConfigFileError(this,
                                           pelmHwChild,
                                           N_("Invalid value '%s' in HID/Pointing/@type"),
-                                          strHidType.c_str());
+                                          strHIDType.c_str());
             }
         }
         else if (pelmHwChild->nameEquals("Chipset"))
@@ -2488,7 +2498,7 @@ void MachineConfigFile::readHardware(const xml::ElementNode &elmHardware,
         }
         else if (pelmHwChild->nameEquals("HPET"))
         {
-            pelmHwChild->getAttributeValue("enabled", hw.fHpetEnabled);
+            pelmHwChild->getAttributeValue("enabled", hw.fHPETEnabled);
         }
         else if (pelmHwChild->nameEquals("Boot"))
         {
@@ -2755,6 +2765,23 @@ void MachineConfigFile::readHardware(const xml::ElementNode &elmHardware,
                     throw ConfigFileError(this, pelmHwChild, N_("Invalid value '%s' in Clipboard/@mode attribute"), strTemp.c_str());
             }
         }
+        else if (pelmHwChild->nameEquals("DragAndDrop"))
+        {
+            Utf8Str strTemp;
+            if (pelmHwChild->getAttributeValue("mode", strTemp))
+            {
+                if (strTemp == "Disabled")
+                    hw.dragAndDropMode = DragAndDropMode_Disabled;
+                else if (strTemp == "HostToGuest")
+                    hw.dragAndDropMode = DragAndDropMode_HostToGuest;
+                else if (strTemp == "GuestToHost")
+                    hw.dragAndDropMode = DragAndDropMode_GuestToHost;
+                else if (strTemp == "Bidirectional")
+                    hw.dragAndDropMode = DragAndDropMode_Bidirectional;
+                else
+                    throw ConfigFileError(this, pelmHwChild, N_("Invalid value '%s' in DragAndDrop/@mode attribute"), strTemp.c_str());
+            }
+        }
         else if (pelmHwChild->nameEquals("Guest"))
         {
             if (!pelmHwChild->getAttributeValue("memoryBalloonSize", hw.ulMemoryBalloonSize))
@@ -2765,12 +2792,12 @@ void MachineConfigFile::readHardware(const xml::ElementNode &elmHardware,
         else if (pelmHwChild->nameEquals("IO"))
         {
             const xml::ElementNode *pelmBwGroups;
-            const xml::ElementNode *pelmIoChild;
+            const xml::ElementNode *pelmIOChild;
 
-            if ((pelmIoChild = pelmHwChild->findChildElement("IoCache")))
+            if ((pelmIOChild = pelmHwChild->findChildElement("IoCache")))
             {
-                pelmIoChild->getAttributeValue("enabled", hw.ioSettings.fIoCacheEnabled);
-                pelmIoChild->getAttributeValue("size", hw.ioSettings.ulIoCacheSize);
+                pelmIOChild->getAttributeValue("enabled", hw.ioSettings.fIOCacheEnabled);
+                pelmIOChild->getAttributeValue("size", hw.ioSettings.ulIOCacheSize);
             }
 
             if ((pelmBwGroups = pelmHwChild->findChildElement("BandwidthGroups")))
@@ -2813,7 +2840,7 @@ void MachineConfigFile::readHardware(const xml::ElementNode &elmHardware,
                 const xml::ElementNode *pelmDevice;
                 while ((pelmDevice = nl2.forAllNodes()))
                 {
-                    HostPciDeviceAttachment hpda;
+                    HostPCIDeviceAttachment hpda;
 
                     if (!pelmDevice->getAttributeValue("host", hpda.uHostAddress))
                          throw ConfigFileError(this, pelmDevice, N_("Missing Device/@host attribute"));
@@ -3223,6 +3250,32 @@ void MachineConfigFile::readAutostart(const xml::ElementNode *pElmAutostart, Aut
 }
 
 /**
+ * Called for reading the <Groups> element under <Machine>.
+ */
+void MachineConfigFile::readGroups(const xml::ElementNode *pElmGroups, StringsList *pllGroups)
+{
+    pllGroups->clear();
+    if (!pElmGroups || m->sv < SettingsVersion_v1_13)
+    {
+        pllGroups->push_back("/");
+        return;
+    }
+
+    xml::NodesLoop nlGroups(*pElmGroups);
+    const xml::ElementNode *pelmGroup;
+    while ((pelmGroup = nlGroups.forAllNodes()))
+    {
+        if (pelmGroup->nameEquals("Group"))
+        {
+            Utf8Str strGroup;
+            if (!pelmGroup->getAttributeValue("name", strGroup))
+                throw ConfigFileError(this, pelmGroup, N_("Required Group/@name attribute is missing"));
+            pllGroups->push_back(strGroup);
+        }
+    }
+}
+
+/**
  * Called initially for the <Snapshot> element under <Machine>, if present,
  * to store the snapshot's data into the given Snapshot structure (which is
  * then the one in the Machine struct). This might then recurse if
@@ -3297,6 +3350,7 @@ void MachineConfigFile::readSnapshot(const xml::ElementNode &elmSnapshot,
 
     readDebugging(elmSnapshot.findChildElement("Debugging"), &snap.debugging);
     readAutostart(elmSnapshot.findChildElement("Autostart"), &snap.autostart);
+    // note: Groups exist only for Machine, not for Snapshot
 }
 
 const struct {
@@ -3449,6 +3503,8 @@ void MachineConfigFile::readMachine(const xml::ElementNode &elmMachine)
                 readDebugging(pelmMachineChild, &debugging);
             else if (pelmMachineChild->nameEquals("Autostart"))
                 readAutostart(pelmMachineChild, &autostart);
+            else if (pelmMachineChild->nameEquals("Groups"))
+                readGroups(pelmMachineChild, &machineUserData.llGroups);
         }
 
         if (m->sv < SettingsVersion_v1_9)
@@ -3567,36 +3623,36 @@ void MachineConfigFile::buildHardwareXML(xml::ElementNode &elmParent,
     if (    (m->sv >= SettingsVersion_v1_10)
        )
     {
-         xml::ElementNode *pelmHid = pelmHardware->createChild("HID");
-         const char *pcszHid;
+         xml::ElementNode *pelmHID = pelmHardware->createChild("HID");
+         const char *pcszHID;
 
-         switch (hw.pointingHidType)
+         switch (hw.pointingHIDType)
          {
-            case PointingHidType_USBMouse:      pcszHid = "USBMouse";   break;
-            case PointingHidType_USBTablet:     pcszHid = "USBTablet";  break;
-            case PointingHidType_PS2Mouse:      pcszHid = "PS2Mouse";   break;
-            case PointingHidType_ComboMouse:    pcszHid = "ComboMouse"; break;
-            case PointingHidType_None:          pcszHid = "None";       break;
-            default:            Assert(false);  pcszHid = "PS2Mouse";   break;
+            case PointingHIDType_USBMouse:      pcszHID = "USBMouse";   break;
+            case PointingHIDType_USBTablet:     pcszHID = "USBTablet";  break;
+            case PointingHIDType_PS2Mouse:      pcszHID = "PS2Mouse";   break;
+            case PointingHIDType_ComboMouse:    pcszHID = "ComboMouse"; break;
+            case PointingHIDType_None:          pcszHID = "None";       break;
+            default:            Assert(false);  pcszHID = "PS2Mouse";   break;
          }
-         pelmHid->setAttribute("Pointing", pcszHid);
+         pelmHID->setAttribute("Pointing", pcszHID);
 
-         switch (hw.keyboardHidType)
+         switch (hw.keyboardHIDType)
          {
-            case KeyboardHidType_USBKeyboard:   pcszHid = "USBKeyboard";   break;
-            case KeyboardHidType_PS2Keyboard:   pcszHid = "PS2Keyboard";   break;
-            case KeyboardHidType_ComboKeyboard: pcszHid = "ComboKeyboard"; break;
-            case KeyboardHidType_None:          pcszHid = "None";          break;
-            default:            Assert(false);  pcszHid = "PS2Keyboard";   break;
+            case KeyboardHIDType_USBKeyboard:   pcszHID = "USBKeyboard";   break;
+            case KeyboardHIDType_PS2Keyboard:   pcszHID = "PS2Keyboard";   break;
+            case KeyboardHIDType_ComboKeyboard: pcszHID = "ComboKeyboard"; break;
+            case KeyboardHIDType_None:          pcszHID = "None";          break;
+            default:            Assert(false);  pcszHID = "PS2Keyboard";   break;
          }
-         pelmHid->setAttribute("Keyboard", pcszHid);
+         pelmHID->setAttribute("Keyboard", pcszHID);
     }
 
     if (    (m->sv >= SettingsVersion_v1_10)
        )
     {
-         xml::ElementNode *pelmHpet = pelmHardware->createChild("HPET");
-         pelmHpet->setAttribute("enabled", hw.fHpetEnabled);
+         xml::ElementNode *pelmHPET = pelmHardware->createChild("HPET");
+         pelmHPET->setAttribute("enabled", hw.fHPETEnabled);
     }
 
     if (    (m->sv >= SettingsVersion_v1_11)
@@ -4028,25 +4084,36 @@ void MachineConfigFile::buildHardwareXML(xml::ElementNode &elmParent,
     const char *pcszClip;
     switch (hw.clipboardMode)
     {
-        case ClipboardMode_Disabled: pcszClip = "Disabled"; break;
+        default: /*case ClipboardMode_Disabled:*/ pcszClip = "Disabled"; break;
         case ClipboardMode_HostToGuest: pcszClip = "HostToGuest"; break;
         case ClipboardMode_GuestToHost: pcszClip = "GuestToHost"; break;
-        default: /*case ClipboardMode_Bidirectional:*/ pcszClip = "Bidirectional"; break;
+        case ClipboardMode_Bidirectional: pcszClip = "Bidirectional"; break;
     }
     pelmClip->setAttribute("mode", pcszClip);
 
+    xml::ElementNode *pelmDragAndDrop = pelmHardware->createChild("DragAndDrop");
+    const char *pcszDragAndDrop;
+    switch (hw.dragAndDropMode)
+    {
+        default: /*case DragAndDropMode_Disabled:*/ pcszDragAndDrop = "Disabled"; break;
+        case DragAndDropMode_HostToGuest: pcszDragAndDrop = "HostToGuest"; break;
+        case DragAndDropMode_GuestToHost: pcszDragAndDrop = "GuestToHost"; break;
+        case DragAndDropMode_Bidirectional: pcszDragAndDrop = "Bidirectional"; break;
+    }
+    pelmDragAndDrop->setAttribute("mode", pcszDragAndDrop);
+
     if (m->sv >= SettingsVersion_v1_10)
     {
-        xml::ElementNode *pelmIo = pelmHardware->createChild("IO");
-        xml::ElementNode *pelmIoCache;
+        xml::ElementNode *pelmIO = pelmHardware->createChild("IO");
+        xml::ElementNode *pelmIOCache;
 
-        pelmIoCache = pelmIo->createChild("IoCache");
-        pelmIoCache->setAttribute("enabled", hw.ioSettings.fIoCacheEnabled);
-        pelmIoCache->setAttribute("size", hw.ioSettings.ulIoCacheSize);
+        pelmIOCache = pelmIO->createChild("IoCache");
+        pelmIOCache->setAttribute("enabled", hw.ioSettings.fIOCacheEnabled);
+        pelmIOCache->setAttribute("size", hw.ioSettings.ulIOCacheSize);
 
         if (m->sv >= SettingsVersion_v1_11)
         {
-            xml::ElementNode *pelmBandwidthGroups = pelmIo->createChild("BandwidthGroups");
+            xml::ElementNode *pelmBandwidthGroups = pelmIO->createChild("BandwidthGroups");
             for (BandwidthGroupList::const_iterator it = hw.ioSettings.llBandwidthGroups.begin();
                  it != hw.ioSettings.llBandwidthGroups.end();
                  ++it)
@@ -4071,16 +4138,16 @@ void MachineConfigFile::buildHardwareXML(xml::ElementNode &elmParent,
 
     if (m->sv >= SettingsVersion_v1_12)
     {
-        xml::ElementNode *pelmPci = pelmHardware->createChild("HostPci");
-        xml::ElementNode *pelmPciDevices = pelmPci->createChild("Devices");
+        xml::ElementNode *pelmPCI = pelmHardware->createChild("HostPci");
+        xml::ElementNode *pelmPCIDevices = pelmPCI->createChild("Devices");
 
-        for (HostPciDeviceAttachmentList::const_iterator it = hw.pciAttachments.begin();
+        for (HostPCIDeviceAttachmentList::const_iterator it = hw.pciAttachments.begin();
              it != hw.pciAttachments.end();
              ++it)
         {
-            const HostPciDeviceAttachment &hpda = *it;
+            const HostPCIDeviceAttachment &hpda = *it;
 
-            xml::ElementNode *pelmThis = pelmPciDevices->createChild("Device");
+            xml::ElementNode *pelmThis = pelmPCIDevices->createChild("Device");
 
             pelmThis->setAttribute("host",  hpda.uHostAddress);
             pelmThis->setAttribute("guest", hpda.uGuestAddress);
@@ -4150,9 +4217,9 @@ void MachineConfigFile::buildNetworkXML(NetworkAttachmentType_T mode,
                 pelmNAT->setAttribute("tcpsnd", nic.nat.u32TcpSnd);
             xml::ElementNode *pelmDNS;
             pelmDNS = pelmNAT->createChild("DNS");
-            pelmDNS->setAttribute("pass-domain", nic.nat.fDnsPassDomain);
-            pelmDNS->setAttribute("use-proxy", nic.nat.fDnsProxy);
-            pelmDNS->setAttribute("use-host-resolver", nic.nat.fDnsUseHostResolver);
+            pelmDNS->setAttribute("pass-domain", nic.nat.fDNSPassDomain);
+            pelmDNS->setAttribute("use-proxy", nic.nat.fDNSProxy);
+            pelmDNS->setAttribute("use-host-resolver", nic.nat.fDNSUseHostResolver);
 
             xml::ElementNode *pelmAlias;
             pelmAlias = pelmNAT->createChild("Alias");
@@ -4160,18 +4227,18 @@ void MachineConfigFile::buildNetworkXML(NetworkAttachmentType_T mode,
             pelmAlias->setAttribute("proxy-only", nic.nat.fAliasProxyOnly);
             pelmAlias->setAttribute("use-same-ports", nic.nat.fAliasUseSamePorts);
 
-            if (   nic.nat.strTftpPrefix.length()
-                || nic.nat.strTftpBootFile.length()
-                || nic.nat.strTftpNextServer.length())
+            if (   nic.nat.strTFTPPrefix.length()
+                || nic.nat.strTFTPBootFile.length()
+                || nic.nat.strTFTPNextServer.length())
             {
                 xml::ElementNode *pelmTFTP;
                 pelmTFTP = pelmNAT->createChild("TFTP");
-                if (nic.nat.strTftpPrefix.length())
-                    pelmTFTP->setAttribute("prefix", nic.nat.strTftpPrefix);
-                if (nic.nat.strTftpBootFile.length())
-                    pelmTFTP->setAttribute("boot-file", nic.nat.strTftpBootFile);
-                if (nic.nat.strTftpNextServer.length())
-                    pelmTFTP->setAttribute("next-server", nic.nat.strTftpNextServer);
+                if (nic.nat.strTFTPPrefix.length())
+                    pelmTFTP->setAttribute("prefix", nic.nat.strTFTPPrefix);
+                if (nic.nat.strTFTPBootFile.length())
+                    pelmTFTP->setAttribute("boot-file", nic.nat.strTFTPBootFile);
+                if (nic.nat.strTFTPNextServer.length())
+                    pelmTFTP->setAttribute("next-server", nic.nat.strTFTPNextServer);
             }
             for (NATRuleList::const_iterator rule = nic.nat.llRules.begin();
                     rule != nic.nat.llRules.end(); ++rule)
@@ -4430,6 +4497,30 @@ void MachineConfigFile::buildAutostartXML(xml::ElementNode *pElmParent, const Au
 }
 
 /**
+ * Creates a <Groups> node under elmParent and then writes out the XML
+ * keys under that. Called for the <Machine> node only.
+ *
+ * @param pElmParent    Pointer to the parent element.
+ * @param pllGroups     Pointer to the groups list.
+ */
+void MachineConfigFile::buildGroupsXML(xml::ElementNode *pElmParent, const StringsList *pllGroups)
+{
+    if (   m->sv < SettingsVersion_v1_13 || pllGroups->size() == 0
+        || (pllGroups->size() == 1 && pllGroups->front() == "/"))
+        return;
+
+    xml::ElementNode *pElmGroups = pElmParent->createChild("Groups");
+    for (StringsList::const_iterator it = pllGroups->begin();
+         it != pllGroups->end();
+         ++it)
+    {
+        const Utf8Str &group = *it;
+        xml::ElementNode *pElmGroup = pElmGroups->createChild("Group");
+        pElmGroup->setAttribute("name", group);
+    }
+}
+
+/**
  * Writes a single snapshot into the DOM tree. Initially this gets called from MachineConfigFile::write()
  * for the root snapshot of a machine, if present; elmParent then points to the <Snapshots> node under the
  * <Machine> node to which <Snapshot> must be added. This may then recurse for child snapshots.
@@ -4460,6 +4551,7 @@ void MachineConfigFile::buildSnapshotXML(xml::ElementNode &elmParent,
                                     // since snapshots never get written then
     buildDebuggingXML(pelmSnapshot, &snap.debugging);
     buildAutostartXML(pelmSnapshot, &snap.autostart);
+    // note: Groups exist only for Machine, not for Snapshot
 
     if (snap.llChildSnapshots.size())
     {
@@ -4609,6 +4701,7 @@ void MachineConfigFile::buildMachineXML(xml::ElementNode &elmMachine,
                                pllElementsWithUuidAttributes);
     buildDebuggingXML(&elmMachine, &debugging);
     buildAutostartXML(&elmMachine, &autostart);
+    buildGroupsXML(&elmMachine, &machineUserData.llGroups);
 }
 
 /**
@@ -4726,9 +4819,11 @@ void MachineConfigFile::bumpSettingsVersionIfNeeded()
 {
     if (m->sv < SettingsVersion_v1_13)
     {
-        // VirtualBox 4.2 adds tracing and autostart.
+        // VirtualBox 4.2 adds tracing, autostart and groups.
         if (   !debugging.areDefaultSettings()
-            || !autostart.areDefaultSettings())
+            || !autostart.areDefaultSettings()
+            || machineUserData.llGroups.size() > 1
+            || machineUserData.llGroups.front() != "/")
             m->sv = SettingsVersion_v1_13;
     }
 
@@ -4978,16 +5073,16 @@ void MachineConfigFile::bumpSettingsVersionIfNeeded()
     // VirtualBox 3.2: Check for non default I/O settings
     if (m->sv < SettingsVersion_v1_10)
     {
-        if (   (hardwareMachine.ioSettings.fIoCacheEnabled != true)
-            || (hardwareMachine.ioSettings.ulIoCacheSize != 5)
+        if (   (hardwareMachine.ioSettings.fIOCacheEnabled != true)
+            || (hardwareMachine.ioSettings.ulIOCacheSize != 5)
                 // and page fusion
             || (hardwareMachine.fPageFusionEnabled)
                 // and CPU hotplug, RTC timezone control, HID type and HPET
             || machineUserData.fRTCUseUTC
             || hardwareMachine.fCpuHotPlug
-            || hardwareMachine.pointingHidType != PointingHidType_PS2Mouse
-            || hardwareMachine.keyboardHidType != KeyboardHidType_PS2Keyboard
-            || hardwareMachine.fHpetEnabled
+            || hardwareMachine.pointingHIDType != PointingHIDType_PS2Mouse
+            || hardwareMachine.keyboardHIDType != KeyboardHIDType_PS2Keyboard
+            || hardwareMachine.fHPETEnabled
            )
             m->sv = SettingsVersion_v1_10;
     }
@@ -5017,15 +5112,15 @@ void MachineConfigFile::bumpSettingsVersionIfNeeded()
                           || netit->nat.u32SockSnd != 0
                           || netit->nat.u32TcpRcv != 0
                           || netit->nat.u32TcpSnd != 0
-                          || !netit->nat.fDnsPassDomain
-                          || netit->nat.fDnsProxy
-                          || netit->nat.fDnsUseHostResolver
+                          || !netit->nat.fDNSPassDomain
+                          || netit->nat.fDNSProxy
+                          || netit->nat.fDNSUseHostResolver
                           || netit->nat.fAliasLog
                           || netit->nat.fAliasProxyOnly
                           || netit->nat.fAliasUseSamePorts
-                          || netit->nat.strTftpPrefix.length()
-                          || netit->nat.strTftpBootFile.length()
-                          || netit->nat.strTftpNextServer.length()
+                          || netit->nat.strTFTPPrefix.length()
+                          || netit->nat.strTFTPBootFile.length()
+                          || netit->nat.strTFTPNextServer.length()
                           || netit->nat.llRules.size()
                          )
                      )

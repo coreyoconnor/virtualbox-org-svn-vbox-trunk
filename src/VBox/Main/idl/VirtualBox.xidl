@@ -106,6 +106,13 @@
   process which issues the object instantiation call. <tt>Session</tt> objects
   represent virtual machine sessions which are used to configure virtual
   machines and control their execution.
+
+  The naming of methods and attributes is very clearly defined: they all start
+  with a lowercase letter (except if they start with an acronym), and are using
+  CamelCase style otherwise. This naming only applies to the IDL description,
+  and is modified by the various language bindings (some convert the first
+  character to upper case, some not). See the SDK reference for more details
+  about how to call a method or attribute from a specific programming language.
 </desc>
 
 <if target="midl">
@@ -490,7 +497,8 @@
     <const name="v1_13"     value="15">
       <desc>Settings version "1.13", written by VirtualBox 4.2.x.</desc>
       <!--
-          Machine changes: tracing config;
+          Machine changes: tracing config, groups, autostart;
+          NetworkAdapter changes: unit for bandwidth group limits.
       -->
     </const>
 
@@ -841,7 +849,7 @@
       <desc>
         In <link to="IMachine::sessionState"/>, this means that the machine
         is currently locked for a session, whose process identifier can
-        then be found in the <link to="IMachine::sessionPid" /> attribute.
+        then be found in the <link to="IMachine::sessionPID" /> attribute.
 
         In <link to="ISession::state"/>, this means that a machine is
         currently locked for this session, and the mutable machine object
@@ -959,7 +967,7 @@
 
   <enum
     name="LockType"
-    uuid="138b53f8-db4b-47c5-b32b-4ef52f769413"
+    uuid="168a6a8e-12fd-4878-a1f9-38a750a56089"
     >
     <desc>
       Used with <link to="IMachine::lockMachine" />.
@@ -969,6 +977,10 @@
     </const>
     <const name="Shared" value="1">
       <desc>Request only a shared read lock for remote-controlling the machine.</desc>
+    </const>
+    <const name="VM" value="3">
+      <desc>Lock the machine for writing, and create objects necessary for
+        running a VM in this process.</desc>
     </const>
   </enum>
 
@@ -1066,6 +1078,20 @@
   </enum>
 
   <enum
+    name="DragAndDropMode"
+    uuid="b618ea0e-b6fb-4f8d-97f7-5e237e49b547"
+    >
+    <desc>
+      Drag'n'Drop interchange mode.
+    </desc>
+
+    <const name="Disabled"          value="0"/>
+    <const name="HostToGuest"       value="1"/>
+    <const name="GuestToHost"       value="2"/>
+    <const name="Bidirectional"     value="3"/>
+  </enum>
+
+  <enum
     name="Scope"
     uuid="7c91096e-499e-4eca-9f9b-9001438d7855"
     >
@@ -1133,8 +1159,8 @@
   </enum>
 
   <enum
-    name="PointingHidType"
-    uuid="0d3c17a2-821a-4b2e-ae41-890c6c60aa97"
+    name="PointingHIDType"
+    uuid="e44b2f7b-72ba-44fb-9e53-2186014f0d17"
     >
     <desc>
       Type of pointing device used in a virtual machine.
@@ -1158,8 +1184,8 @@
   </enum>
 
   <enum
-    name="KeyboardHidType"
-    uuid="5a5b0996-3a3e-44bb-9019-56979812cbcc"
+    name="KeyboardHIDType"
+    uuid="383e43d7-5c7c-4ec8-9cb8-eda1bccd6699"
     >
     <desc>
       Type of keyboard device used in a virtual machine.
@@ -1186,7 +1212,7 @@
 
   <interface
     name="IVirtualBoxErrorInfo" extends="$errorinfo"
-    uuid="e053d3c0-f493-491b-a735-3a9f0b1feed4"
+    uuid="f91e6e91-49e1-4fd2-b21e-269003350d06"
     supportsErrorInfo="no"
     wsmap="managed"
     >
@@ -1290,15 +1316,15 @@
     wsmap="managed"
     >
     <desc>
-      The IDHCPServer interface represents the vbox dhcp server configuration.
+      The IDHCPServer interface represents the vbox DHCP server configuration.
 
-      To enumerate all the dhcp servers on the host, use the
+      To enumerate all the DHCP servers on the host, use the
       <link to="IVirtualBox::DHCPServers"/> attribute.
     </desc>
 
     <attribute name="enabled" type="boolean">
       <desc>
-        specifies if the dhcp server is enabled
+        specifies if the DHCP server is enabled
       </desc>
     </attribute>
 
@@ -1397,7 +1423,7 @@
 
   <interface
     name="IVirtualBox" extends="$unknown"
-    uuid="867664ba-41ce-4099-a10d-b7a8e34057c7"
+    uuid="3b90eded-f061-432f-9e0f-4b53cc7b6fa0"
     wsmap="managed"
     >
     <desc>
@@ -1494,6 +1520,16 @@
       </desc>
     </attribute>
 
+    <attribute name="machineGroups" type="wstring" readonly="yes" safearray="yes">
+      <desc>
+        Array of all machine group names which are used by the machines which
+        are accessible. Each group is only listed once, however they are listed
+        in no particular order and there is no guarantee that there are no gaps
+        in the group hierarchy (i.e. <tt>"/"</tt>, <tt>"/group/subgroup"</tt>
+        is a valid result).
+      </desc>
+    </attribute>
+
     <attribute name="hardDisks" type="IMedium" readonly="yes" safearray="yes">
       <desc>
         Array of medium objects known to this VirtualBox installation.
@@ -1581,9 +1617,10 @@
         This API serves two purposes:
 
         <ul>
-          <li>It gets called by <link to="#createMachine" /> if NULL is specified
-          for the @a settingsFile argument there, which means that API should use
-          a recommended default file name.</li>
+          <li>It gets called by <link to="#createMachine" /> if @c null or
+            empty string (which is recommended) is specified for the
+            @a settingsFile argument there, which means that API should use
+            a recommended default file name.</li>
 
           <li>It can be called manually by a client software before creating a machine,
             e.g. if that client wants to pre-create the machine directory to create
@@ -1596,6 +1633,11 @@
         See <link to="IMachine::name"/> and <link to="#createMachine"/> for more
         details about the machine name.
 
+        @a groupName defines which additional subdirectory levels should be
+        included. It must be either a valid group name or @c null or empty
+        string which designates that the machine will not be related to a
+        machine group.
+
         If @a baseFolder is a @c null or empty string (which is recommended), the
         default machine settings folder
         (see <link to="ISystemProperties::defaultMachineFolder" />) will be used as
@@ -1604,10 +1646,14 @@
         will be used.
 
         This method does not access the host disks. In particular, it does not check
-        for whether a machine of this name already exists.
+        for whether a machine with this name already exists.
       </desc>
       <param name="name" type="wstring" dir="in">
         <desc>Suggested machine name.</desc>
+      </param>
+      <param name="group" type="wstring" dir="in">
+        <desc>Machine group name for the new machine or machine group. It is
+        used to determine the right subdirectory.</desc>
       </param>
       <param name="baseFolder" type="wstring" dir="in">
         <desc>Base machine folder (optional).</desc>
@@ -1626,12 +1672,13 @@
         with VirtualBox 4.0, a ".vbox" extension is recommended, but not enforced,
         and machine files can be created at arbitrary locations.
 
-        However, it is is recommended that machines be created in the default
+        However, it is recommended that machines are created in the default
         machine folder (e.g. "/home/user/VirtualBox VMs/name/name.vbox"; see
         <link to="ISystemProperties::defaultMachineFolder" />). If you specify
-        NULL for the @a settingsFile argument, <link to="#composeMachineFilename" />
-        is called automatically to have such a recommended name composed based
-        on the machine name given in the @a name argument.
+        @c null or empty string (which is recommended) for the @a settingsFile
+        argument, <link to="#composeMachineFilename" /> is called automatically
+        to have such a recommended name composed based on the machine name
+        given in the @a name argument and the primary group.
 
         If the resulting settings file already exists, this method will fail,
         unless @a forceOverwrite is set.
@@ -1692,11 +1739,17 @@
 
       <param name="settingsFile" type="wstring" dir="in">
         <desc>Fully qualified path where the settings file should be created,
-        or NULL for a default folder and file based on the @a name argument
+          empty string or @c null for a default folder and file based on the
+          @a name argument and the primary group.
         (see <link to="#composeMachineFilename" />).</desc>
       </param>
       <param name="name" type="wstring" dir="in">
         <desc>Machine name.</desc>
+      </param>
+      <param name="groups" type="wstring" safearray="yes" dir="in">
+        <desc>Array of group names. @c null or an empty array have the same
+          meaning as an array with just the empty string or <tt>"/"</tt>, i.e.
+          create a machine without group association.</desc>
       </param>
       <param name="osTypeId" type="wstring" dir="in">
         <desc>Guest OS Type ID.</desc>
@@ -1783,6 +1836,20 @@
       </param>
       <param name="machine" type="IMachine" dir="return">
         <desc>Machine object, if found.</desc>
+      </param>
+    </method>
+
+    <method name="getMachinesByGroups">
+      <desc>
+        Gets all machine references which are in one of the specified groups.
+      </desc>
+      <param name="groups" type="wstring" dir="in" safearray="yes">
+        <desc>What groups to match. The usual group list rules apply, i.e.
+        passing an empty list will match VMs in the toplevel group, likewise
+        the empty string.</desc>
+      </param>
+      <param name="machines" type="IMachine" dir="return" safearray="yes">
+        <desc>All machines which matched.</desc>
       </param>
     </method>
 
@@ -1896,7 +1963,7 @@
         storage location, if the format supports it (e.g. for hard disk images),
         or a new UUID will be randomly generated (e.g. for ISO and RAW files).
         If for some reason you need to change the medium's UUID, use
-        <link to="IMedium::setIDs" />.
+        <link to="IMedium::setIds" />.
 
         If a differencing hard disk medium is to be opened by this method, the
         operation will succeed only if its parent medium and all ancestors,
@@ -2102,9 +2169,26 @@
       </param>
     </method>
 
+    <method name="setSettingsSecret">
+      <desc>
+        Unlocks the secret data by passing the unlock password to the
+        server. The server will cache the password for that machine.
+
+        <result name="VBOX_E_INVALID_VM_STATE">
+          Virtual machine is not mutable.
+        </result>
+
+      </desc>
+      <param name="password" type="wstring" dir="in">
+        <desc>
+          The cipher key.
+        </desc>
+      </param>
+    </method>
+
     <!--method name="createDHCPServerForInterface">
       <desc>
-        Creates a dhcp server settings to be used for the given interface
+        Creates a DHCP server settings to be used for the given interface
         <result name="E_INVALIDARG">
           Host network interface @a name already exists.
         </result>
@@ -2113,13 +2197,13 @@
         <desc>Network Interface</desc>
       </param>
       <param name="server" type="IDHCPServer" dir="out">
-        <desc>Dhcp server settings</desc>
+        <desc>DHCP server settings</desc>
       </param>
     </method-->
 
     <method name="createDHCPServer">
       <desc>
-        Creates a dhcp server settings to be used for the given internal network name
+        Creates a DHCP server settings to be used for the given internal network name
         <result name="E_INVALIDARG">
           Host network interface @a name already exists.
         </result>
@@ -2128,13 +2212,13 @@
         <desc>server name</desc>
       </param>
       <param name="server" type="IDHCPServer" dir="return">
-        <desc>Dhcp server settings</desc>
+        <desc>DHCP server settings</desc>
       </param>
     </method>
 
     <method name="findDHCPServerByNetworkName">
       <desc>
-        Searches a dhcp server settings to be used for the given internal network name
+        Searches a DHCP server settings to be used for the given internal network name
         <result name="E_INVALIDARG">
           Host network interface @a name already exists.
         </result>
@@ -2144,13 +2228,13 @@
         <desc>server name</desc>
       </param>
       <param name="server" type="IDHCPServer" dir="return">
-        <desc>Dhcp server settings</desc>
+        <desc>DHCP server settings</desc>
       </param>
     </method>
 
     <!--method name="findDHCPServerForInterface">
       <desc>
-        Searches a dhcp server settings to be used for the given interface
+        Searches a DHCP server settings to be used for the given interface
         <result name="E_INVALIDARG">
           Host network interface @a name already exists.
         </result>
@@ -2159,19 +2243,19 @@
         <desc>Network Interface</desc>
       </param>
       <param name="server" type="IDHCPServer" dir="out">
-        <desc>Dhcp server settings</desc>
+        <desc>DHCP server settings</desc>
       </param>
     </method-->
 
     <method name="removeDHCPServer">
       <desc>
-        Removes the dhcp server settings
+        Removes the DHCP server settings
         <result name="E_INVALIDARG">
           Host network interface @a name already exists.
         </result>
       </desc>
       <param name="server" type="IDHCPServer" dir="in">
-        <desc>Dhcp server settings to be removed</desc>
+        <desc>DHCP server settings to be removed</desc>
       </param>
     </method>
 
@@ -3543,7 +3627,7 @@
   </enum>
 
   <interface
-    name="IPciAddress" extends="$unknown"
+    name="IPCIAddress" extends="$unknown"
     uuid="D88B324F-DB19-4D3B-A1A9-BF5B127199A8"
     wsmap="struct"
     >
@@ -3586,7 +3670,7 @@
   </interface>
 
   <interface
-    name="IPciDeviceAttachment" extends="$unknown"
+    name="IPCIDeviceAttachment" extends="$unknown"
     uuid="91f33d6f-e621-4f70-a77e-15f0e3c714d5"
     wsmap="struct"
     >
@@ -3693,7 +3777,7 @@
 
   <interface
     name="IMachine" extends="$unknown"
-    uuid="019d7a7b-1e2d-4008-b954-4b5d72d103b8"
+    uuid="22781af3-1c96-4126-9edf-67a020e0e858"
     wsmap="managed"
     >
     <desc>
@@ -3847,6 +3931,17 @@
       <desc>UUID of the virtual machine.</desc>
     </attribute>
 
+    <attribute name="groups" type="wstring" safearray="yes">
+      <desc>
+        Array of machine group names of which this machine is a member.
+        <tt>""</tt> and <tt>"/"</tt> are synonyms for the toplevel group. Each
+        group is only listed once, however they are listed in no particular
+        order and there is no guarantee that there are no gaps in the group
+        hierarchy (i.e. <tt>"/group"</tt>,
+        <tt>"/group/subgroup/subsubgroup"</tt> is a valid result).
+      </desc>
+    </attribute>
+
     <attribute name="OSTypeId" type="wstring">
       <desc>
         User-defined identifier of the Guest OS type.
@@ -3870,7 +3965,7 @@
         The UUID presented to the guest via memory tables, hardware and guest
         properties.  For most VMs this is the same as the @a id, but for VMs
         which have been cloned or teleported it may be the same as the source
-        VM.  This latter is because the guest shouldn't notice that it was
+        VM. The latter is because the guest shouldn't notice that it was
         cloned or teleported.
       </desc>
     </attribute>
@@ -3893,7 +3988,7 @@
       </desc>
     </attribute>
 
-      <attribute name="memorySize" type="unsigned long">
+    <attribute name="memorySize" type="unsigned long">
       <desc>System memory size in megabytes.</desc>
     </attribute>
 
@@ -3943,19 +4038,19 @@
         bootstrap in this VM.</desc>
     </attribute>
 
-    <attribute name="pointingHidType" type="PointingHidType">
+    <attribute name="pointingHIDType" type="PointingHIDType">
       <desc>Type of pointing HID (such as mouse or tablet) used in this VM.
         The default is typically "PS2Mouse" but can vary depending on the
         requirements of the guest operating system.</desc>
     </attribute>
 
-    <attribute name="keyboardHidType" type="KeyboardHidType">
+    <attribute name="keyboardHIDType" type="KeyboardHIDType">
       <desc>Type of keyboard HID used in this VM.
         The default is typically "PS2Keyboard" but can vary depending on the
         requirements of the guest operating system.</desc>
     </attribute>
 
-    <attribute name="hpetEnabled" type="boolean">
+    <attribute name="HPETEnabled" type="boolean">
       <desc>This attribute controls if High Precision Event Timer (HPET) is
         enabled in this VM. Use this property if you want to provide guests
         with additional time source, or if guest requires HPET to function correctly.
@@ -4076,7 +4171,7 @@
       </desc>
     </attribute>
 
-    <attribute name="sessionPid" type="unsigned long" readonly="yes">
+    <attribute name="sessionPID" type="unsigned long" readonly="yes">
       <desc>
         Identifier of the session process. This attribute contains the
         platform-dependent identifier of the process whose session was
@@ -4188,6 +4283,12 @@
       </desc>
     </attribute>
 
+    <attribute name="dragAndDropMode" type="DragAndDropMode">
+      <desc>
+        Which mode is allowed for drag'n'drop.
+      </desc>
+    </attribute>
+
     <attribute name="guestPropertyNotificationPatterns" type="wstring">
       <desc>
         A comma-separated list of simple glob patterns.  Changes to guest
@@ -4279,23 +4380,23 @@
       </desc>
     </attribute>
 
-    <attribute name="ioCacheEnabled" type="boolean">
+    <attribute name="IOCacheEnabled" type="boolean">
       <desc>
         When set to @a true, the builtin I/O cache of the virtual machine
         will be enabled.
       </desc>
     </attribute>
 
-    <attribute name="ioCacheSize" type="unsigned long">
+    <attribute name="IOCacheSize" type="unsigned long">
       <desc>
         Maximum size of the I/O cache in MB.
       </desc>
     </attribute>
 
-    <attribute name="pciDeviceAssignments" type="IPciDeviceAttachment" readonly="yes" safearray="yes">
+    <attribute name="PCIDeviceAssignments" type="IPCIDeviceAttachment" readonly="yes" safearray="yes">
       <desc>Array of PCI devices assigned to this machine, to get list of all
         PCI devices attached to the machine use
-        <link to="IConsole::attachedPciDevices"/> attribute, as this attribute
+        <link to="IConsole::attachedPCIDevices"/> attribute, as this attribute
         is intended to list only devices additional to what described in
         virtual hardware config. Usually, this list keeps host's physical
         devices assigned to the particular machine.
@@ -4336,8 +4437,8 @@
       <desc>
         Enables tracepoints in PDM devices and drivers to use the VMCPU or VM
         structures when firing off trace points.  This is especially useful
-        with DTrace tracepoints, as it allow you to use the VMCPU or VM pointer
-        to obtail useful information such as guest register state.
+        with DTrace tracepoints, as it allows you to use the VMCPU or VM
+        pointer to obtain useful information such as guest register state.
 
         This is disabled by default because devices and drivers normally has no
         business accessing the VMCPU or VM structures, and are therefore unable
@@ -4556,9 +4657,9 @@
             <li><tt>"sdl"</tt>: VirtualBox SDL front-end</li>
             <li><tt>"emergencystop"</tt>: reserved value, used for aborting
               the currently running VM or session owner. In this case the
-              @a session parameter may be @c NULL (if it is non-null it isn't
+              @a session parameter may be @c null (if it is non-null it isn't
               used in any way), and the @a progress return value will be always
-              NULL. The operation completes immediately.</li>
+              @c null. The operation completes immediately.</li>
           </ul>
         </desc>
       </param>
@@ -4727,7 +4828,92 @@
         specified there.</desc>
       </param>
       <param name="medium" type="IMedium" dir="in">
-        <desc>Medium to mount or NULL for an empty drive.</desc>
+        <desc>Medium to mount or @c null for an empty drive.</desc>
+      </param>
+    </method>
+
+  <method name="attachDeviceWithoutMedium">
+      <desc>
+      Attaches a device and optionally mounts a medium to the given storage
+      controller (<link to="IStorageController" />, identified by @a name),
+      at the indicated port and device.
+
+      This method is intended for managing storage devices in general while a
+      machine is powered off. It can be used to attach and detach fixed
+      and removable media. The following kind of media can be attached
+      to a machine:
+      <ul>
+      <li>
+      For fixed and removable media, you can pass in a medium that was
+      previously opened using <link to="IVirtualBox::openMedium" />.
+      </li>
+
+      <li>Only for storage devices supporting removable media (such as
+      DVDs and floppies) with an empty drive or one of the medium objects listed
+      in the <link to="IHost::DVDDrives" /> and <link to="IHost::floppyDrives"/>
+      arrays to indicate a host drive.
+      For removable devices, you can also use <link to="IMachine::mountMedium"/>
+      to change the media while the machine is running.
+      </li>
+      </ul>
+
+      In a VM's default configuration of virtual machines, the secondary
+      master of the IDE controller is used for a CD/DVD drive.
+      <link to="IMediumAttachment"/> will appear in the machine's list of medium
+      attachments (see <link to="IMachine::mediumAttachments"/>).
+
+      See <link to="IMedium"/> and <link to="IMediumAttachment"/> for more
+      information about attaching media.
+
+      The specified device slot must not have a device attached to it,
+      or this method will fail.
+      <note>
+      You cannot attach a device to a newly created machine until
+      this machine's settings are saved to disk using
+      <link to="#saveSettings"/>.
+      </note>
+      <note>
+      If the medium is being attached indirectly, a new differencing medium
+      will implicitly be created for it and attached instead. If the
+      changes made to the machine settings (including this indirect
+      attachment) are later cancelled using <link to="#discardSettings"/>,
+      this implicitly created differencing medium will implicitly
+      be deleted.
+      </note>
+
+      <result name="E_INVALIDARG">
+        SATA device, SATA port, IDE port or IDE slot out of range, or
+            file or UUID not found.
+      </result>
+      <result name="VBOX_E_INVALID_OBJECT_STATE">
+        Machine must be registered before media can be attached.
+      </result>
+      <result name="VBOX_E_INVALID_VM_STATE">
+      Invalid machine state.
+      </result>
+      <result name="VBOX_E_OBJECT_IN_USE">
+      A medium is already attached to this or another virtual machine.
+      </result>
+      </desc>
+      <param name="name" type="wstring" dir="in">
+      <desc>Name of the storage controller to attach the device to.</desc>
+      </param>
+      <param name="controllerPort" type="long" dir="in">
+      <desc>Port to attach the device to. For an IDE controller, 0 specifies
+      the primary controller and 1 specifies the secondary controller.
+      For a SCSI controller, this must range from 0 to 15; for a SATA controller,
+      from 0 to 29; for an SAS controller, from 0 to 7.</desc>
+      </param>
+      <param name="device" type="long" dir="in">
+      <desc>Device slot in the given port to attach the device to. This is only
+      relevant for IDE controllers, for which 0 specifies the master device and
+      1 specifies the slave device. For all other controller types, this must
+      be 0.</desc>
+      </param>
+      <param name="type" type="DeviceType" dir="in">
+      <desc>Device type of the attached device. For media opened by
+      <link to="IVirtualBox::openMedium" />, this must match the device type
+      specified there.</desc>
       </param>
     </method>
 
@@ -4957,9 +5143,91 @@
         <desc>Device slot in the given port.</desc>
       </param>
       <param name="bandwidthGroup" type="IBandwidthGroup" dir="in">
-        <desc>New value for the bandwidth group or NULL for no group.</desc>
+        <desc>New value for the bandwidth group or @c null for no group.</desc>
       </param>
     </method>
+
+    <method name="setNoBandwidthGroupForDevice">
+      <desc>
+      Sets no bandwidth group for an existing storage device.
+      The device must already exist; see <link to="IMachine::attachDevice"/>
+      for how to attach a new device.
+      The @a controllerPort and @a device parameters specify the device slot and
+      have have the same meaning as with <link to="IMachine::attachDevice" />.
+      <result name="E_INVALIDARG">
+      SATA device, SATA port, IDE port or IDE slot out of range.
+      </result>
+      <result name="VBOX_E_INVALID_OBJECT_STATE">
+      Attempt to modify an unregistered virtual machine.
+      </result>
+      <result name="VBOX_E_INVALID_VM_STATE">
+      Invalid machine state.
+      </result>
+
+       </desc>
+      <param name="name" type="wstring" dir="in">
+      <desc>Name of the storage controller.</desc>
+      </param>
+      <param name="controllerPort" type="long" dir="in">
+      <desc>Storage controller port.</desc>
+      </param>
+      <param name="device" type="long" dir="in">
+      <desc>Device slot in the given port.</desc>
+      </param>
+    </method>
+
+
+    <method name="unmountMedium">
+          <desc>
+            Unmounts any currently mounted medium (<link to="IMedium" />,
+            identified by the given UUID @a id) to the given storage controller
+            (<link to="IStorageController" />, identified by @a name),
+            at the indicated port and device. The device must already exist;
+
+            This method is intended only for managing removable media, where the
+            device is fixed but media is changeable at runtime (such as DVDs
+            and floppies). It cannot be used for fixed media such as hard disks.
+
+            The @a controllerPort and @a device parameters specify the device slot
+            and have have the same meaning as with
+            <link to="IMachine::attachDevice" />.
+
+            The specified device slot must have a medium mounted, which will be
+            unmounted. If there is no mounted medium it will do nothing.
+            See <link to="IMedium"/> for more detailed information about
+            attaching/unmounting media.
+
+            <result name="E_INVALIDARG">
+            SATA device, SATA port, IDE port or IDE slot out of range.
+            </result>
+            <result name="VBOX_E_INVALID_OBJECT_STATE">
+            Attempt to unmount medium that is not removeable - not dvd or floppy.
+            </result>
+            <result name="VBOX_E_INVALID_VM_STATE">
+            Invalid machine state.
+            </result>
+            <result name="VBOX_E_OBJECT_IN_USE">
+            Medium already attached to this or another virtual machine.
+            </result>
+            <result name="VBOX_E_OBJECT_NOT_FOUND">
+            Medium not attached to specified port, device, controller.
+            </result>
+
+            </desc>
+              <param name="name" type="wstring" dir="in">
+              <desc>Name of the storage controller to unmount the medium from.</desc>
+              </param>
+              <param name="controllerPort" type="long" dir="in">
+              <desc>Port to unmount the medium from.</desc>
+              </param>
+              <param name="device" type="long" dir="in">
+              <desc>Device slot in the given port to unmount the medium from.</desc>
+              </param>
+              <param name="force" type="boolean" dir="in">
+              <desc>Allows to force unmount of a medium which is locked by 
+              the device slot in the given port medium is attached to.</desc>
+              </param>
+          </method>
 
     <method name="mountMedium">
       <desc>
@@ -5007,7 +5275,7 @@
         <desc>Device slot in the given port to attach the medium to.</desc>
       </param>
       <param name="medium" type="IMedium" dir="in">
-        <desc>Medium to mount or NULL for an empty drive.</desc>
+        <desc>Medium to mount or @c null for an empty drive.</desc>
       </param>
       <param name="force" type="boolean" dir="in">
         <desc>Allows to force unmount/mount of a medium which is locked by
@@ -5073,15 +5341,15 @@
       <param name="attachment" type="IMediumAttachment" dir="return"/>
     </method>
 
-    <method name="attachHostPciDevice">
+    <method name="attachHostPCIDevice">
       <desc>
         Attaches host PCI device with the given (host) PCI address to the
         PCI bus of the virtual machine. Please note, that this operation
         is two phase, as real attachment will happen when VM will start,
-        and most information will be delivered as IHostPciDevicePlugEvent
+        and most information will be delivered as IHostPCIDevicePlugEvent
         on IVirtualBox event source.
 
-        <see><link to="IHostPciDevicePlugEvent"/></see>
+        <see><link to="IHostPCIDevicePlugEvent"/></see>
 
         <result name="VBOX_E_INVALID_VM_STATE">
           Virtual machine state is not stopped (PCI hotplug not yet implemented).
@@ -5105,14 +5373,14 @@
       </param>
     </method>
 
-    <method name="detachHostPciDevice">
+    <method name="detachHostPCIDevice">
       <desc>
         Detach host PCI device from the virtual machine.
-        Also HostPciDevicePlugEvent on IVirtualBox event source
+        Also HostPCIDevicePlugEvent on IVirtualBox event source
         will be delivered. As currently we don't support hot device
-        unplug, IHostPciDevicePlugEvent event is delivered immediately.
+        unplug, IHostPCIDevicePlugEvent event is delivered immediately.
 
-        <see><link to="IHostPciDevicePlugEvent"/></see>
+        <see><link to="IHostPCIDevicePlugEvent"/></see>
 
         <result name="VBOX_E_INVALID_VM_STATE">
           Virtual machine state is not stopped (PCI hotplug not yet implemented).
@@ -6476,7 +6744,7 @@
 
   <interface
     name="IConsole" extends="$unknown"
-    uuid="1968b7d3-e3bf-4ceb-99e0-cb7c913317bb"
+    uuid="db7ab4ca-2a3f-4183-9243-c1208da92392"
     wsmap="managed"
     >
     <desc>
@@ -6603,7 +6871,7 @@
       </desc>
     </attribute>
 
-    <attribute name="attachedPciDevices" type="IPciDeviceAttachment" readonly="yes" safearray="yes">
+    <attribute name="attachedPCIDevices" type="IPCIDeviceAttachment" readonly="yes" safearray="yes">
       <desc>Array of PCI devices attached to this machine.</desc>
     </attribute>
 
@@ -7045,7 +7313,7 @@
         <link to="#saveState"/>), Running or
         Paused virtual machine. When the machine is PoweredOff, an
         offline snapshot is created. When the machine is Running a live
-        snapshot is created, and an online snapshot is is created when Paused.
+        snapshot is created, and an online snapshot is created when Paused.
 
         The taken snapshot is always based on the
         <link to="IMachine::currentSnapshot">current snapshot</link>
@@ -7369,7 +7637,7 @@
 
   <interface
     name="IHostNetworkInterface" extends="$unknown"
-    uuid="ce6fae58-7642-4102-b5db-c9005c2320a8"
+    uuid="87a4153d-6889-4dd6-9654-2e9ff0ae8dec"
     wsmap="managed"
     >
     <desc>
@@ -7390,7 +7658,7 @@
       <desc>Returns the name of a virtual network the interface gets attached to.</desc>
     </attribute>
 
-    <attribute name="dhcpEnabled" type="boolean" readonly="yes">
+    <attribute name="DHCPEnabled" type="boolean" readonly="yes">
       <desc>Specifies whether the DHCP is enabled for the interface.</desc>
     </attribute>
 
@@ -7430,7 +7698,7 @@
       <desc>specifies the host interface type.</desc>
     </attribute>
 
-    <method name="enableStaticIpConfig">
+    <method name="enableStaticIPConfig">
       <desc>sets and enables the static IP V4 configuration for the given interface.</desc>
       <param name="IPAddress" type="wstring" dir="in">
         <desc>
@@ -7444,7 +7712,7 @@
       </param>
     </method>
 
-    <method name="enableStaticIpConfigV6">
+    <method name="enableStaticIPConfigV6">
       <desc>sets and enables the static IP V6 configuration for the given interface.</desc>
       <param name="IPV6Address" type="wstring" dir="in">
         <desc>
@@ -7458,19 +7726,19 @@
       </param>
     </method>
 
-    <method name="enableDynamicIpConfig">
+    <method name="enableDynamicIPConfig">
       <desc>enables the dynamic IP configuration.</desc>
     </method>
 
-    <method name="dhcpRediscover">
-      <desc>refreshes the IP configuration for dhcp-enabled interface.</desc>
+    <method name="DHCPRediscover">
+      <desc>refreshes the IP configuration for DHCP-enabled interface.</desc>
     </method>
 
   </interface>
 
   <interface
     name="IHost" extends="$unknown"
-    uuid="dab4a2b8-c735-4f08-94fc-9bec84182e2f"
+    uuid="30678943-32df-4830-b413-931b25ac86a0"
     wsmap="managed"
     >
     <desc>
@@ -7663,7 +7931,7 @@
       <desc>Returns the current host time in milliseconds since 1970-01-01 UTC.</desc>
     </attribute>
 
-    <attribute name="Acceleration3DAvailable" type="boolean" readonly="yes">
+    <attribute name="acceleration3DAvailable" type="boolean" readonly="yes">
       <desc>Returns @c true when the host supports 3D hardware acceleration.</desc>
     </attribute>
 
@@ -7924,7 +8192,7 @@
   <interface
     name="ISystemProperties"
     extends="$unknown"
-    uuid="8a0ab9ab-48c1-4d04-954b-4a751413d084"
+    uuid="20fc263c-e1e9-4e86-b9b0-835950790d13"
     wsmap="managed"
     >
     <desc>
@@ -8174,6 +8442,12 @@
       system.</desc>
     </attribute>
 
+    <attribute name="autostartDatabasePath" type="wstring">
+      <desc>
+        The path to the autostart database. Depending on the host this might
+        be a filesystem path or something else.
+      </desc>
+    </attribute>
 
     <method name="getMaxNetworkAdapters">
       <desc>
@@ -8306,7 +8580,7 @@
 
   <interface
     name="IGuestOSType" extends="$unknown"
-    uuid="63a03874-e495-41f7-a6dd-48b92fba8355"
+    uuid="6d968f9a-858b-4c50-bf17-241f069e94c2"
     wsmap="struct"
     >
     <desc>
@@ -8364,23 +8638,23 @@
       <desc>Returns recommended network adapter for this OS type.</desc>
     </attribute>
 
-    <attribute name="recommendedPae" type="boolean" readonly="yes">
+    <attribute name="recommendedPAE" type="boolean" readonly="yes">
       <desc>Returns @c true if using PAE is recommended for this OS type.</desc>
     </attribute>
 
-    <attribute name="recommendedDvdStorageController" type="StorageControllerType" readonly="yes">
+    <attribute name="recommendedDVDStorageController" type="StorageControllerType" readonly="yes">
       <desc>Recommended storage controller type for DVD/CD drives.</desc>
     </attribute>
 
-    <attribute name="recommendedDvdStorageBus" type="StorageBus" readonly="yes">
+    <attribute name="recommendedDVDStorageBus" type="StorageBus" readonly="yes">
       <desc>Recommended storage bus type for DVD/CD drives.</desc>
     </attribute>
 
-    <attribute name="recommendedHdStorageController" type="StorageControllerType" readonly="yes">
+    <attribute name="recommendedHDStorageController" type="StorageControllerType" readonly="yes">
       <desc>Recommended storage controller type for HD drives.</desc>
     </attribute>
 
-    <attribute name="recommendedHdStorageBus" type="StorageBus" readonly="yes">
+    <attribute name="recommendedHDStorageBus" type="StorageBus" readonly="yes">
       <desc>Recommended storage bus type for HD drives.</desc>
     </attribute>
 
@@ -8388,19 +8662,19 @@
       <desc>Recommended firmware type.</desc>
     </attribute>
 
-    <attribute name="recommendedUsbHid" type="boolean" readonly="yes">
+    <attribute name="recommendedUSBHID" type="boolean" readonly="yes">
       <desc>Returns @c true if using USB Human Interface Devices, such as keyboard and mouse recommended.</desc>
     </attribute>
 
-    <attribute name="recommendedHpet" type="boolean" readonly="yes">
+    <attribute name="recommendedHPET" type="boolean" readonly="yes">
       <desc>Returns @c true if using HPET is recommended for this OS type.</desc>
     </attribute>
 
-    <attribute name="recommendedUsbTablet" type="boolean" readonly="yes">
+    <attribute name="recommendedUSBTablet" type="boolean" readonly="yes">
       <desc>Returns @c true if using a USB Tablet is recommended.</desc>
     </attribute>
 
-    <attribute name="recommendedRtcUseUtc" type="boolean" readonly="yes">
+    <attribute name="recommendedRTCUseUTC" type="boolean" readonly="yes">
       <desc>Returns @c true if the RTC of this VM should be set to UTC</desc>
     </attribute>
 
@@ -8416,7 +8690,7 @@
       <desc>Returns @c true a floppy drive is recommended for this OS type.</desc>
     </attribute>
 
-    <attribute name="recommendedUsb" type="boolean" readonly="yes">
+    <attribute name="recommendedUSB" type="boolean" readonly="yes">
       <desc>Returns @c true a USB controller is recommended for this OS type.</desc>
     </attribute>
 
@@ -8667,6 +8941,22 @@
       <desc>Something went wrong (error code in flags).</desc>
     </const>
   </enum>
+  
+  <enum
+    name="FileSeekType"
+    uuid="1b73f4f3-3515-4073-a506-76878d9e2541"
+    >
+    <desc>
+      TODO
+    </desc>
+
+    <const name="Set"                     value="0">
+      <desc>TODO</desc>
+    </const>    
+    <const name="Current"                 value="1">
+      <desc>TODO</desc>
+    </const>    
+  </enum>
 
   <enum
     name="ProcessInputFlag"
@@ -8697,6 +8987,74 @@
     <const name="StdErr"                   value="1">
       <desc>Get output from stderr.</desc>
     </const>
+  </enum>
+  
+  <enum
+    name="ProcessWaitForFlag"
+    uuid="23b550c7-78e1-437e-98f0-65fd9757bcd2"
+    >
+    <desc>
+      TODO
+    </desc>
+
+    <const name="None"                    value="0">
+      <desc>TODO</desc>
+    </const>
+    <const name="Start"                   value="1">
+      <desc>TODO</desc>
+    </const>
+    <const name="Terminate"               value="2">
+      <desc>TODO</desc>
+    </const>        
+    <const name="StdIn"                   value="4">
+      <desc>TODO</desc>
+    </const>    
+    <const name="StdOut"                  value="8">
+      <desc>TODO</desc>
+    </const>    
+    <const name="StdErr"                  value="16">
+      <desc>TODO</desc>
+    </const>            
+  </enum>
+  
+  <enum
+    name="ProcessWaitResult"
+    uuid="24a4d49f-a7c1-44b0-b01f-5686a316466b"
+    >
+    <desc>
+      TODO
+    </desc>
+
+    <const name="None"                    value="0">
+      <desc>TODO</desc>
+    </const>
+    <const name="Start"                   value="1">
+      <desc>TODO</desc>
+    </const>
+    <const name="Terminate"               value="2">
+      <desc>TODO</desc>
+    </const>
+    <const name="Status"                  value="3">
+      <desc>TODO</desc>
+    </const>    
+    <const name="Error"                   value="4">
+      <desc>TODO</desc>
+    </const>    
+    <const name="Timeout"                 value="5">
+      <desc>TODO</desc>
+    </const>    
+    <const name="StdIn"                   value="6">
+      <desc>TODO</desc>
+    </const>    
+    <const name="StdOut"                  value="7">
+      <desc>TODO</desc>
+    </const>    
+    <const name="StdErr"                  value="8">
+      <desc>TODO</desc>
+    </const>
+    <const name="Any"                     value="9">
+      <desc>TODO</desc>
+    </const>    
   </enum>
 
   <enum
@@ -8734,6 +9092,213 @@
     <const name="Parents"                 value="1">
       <desc>No error if existing, make parent directories as needed.</desc>
     </const>
+  </enum>
+  
+  <enum
+    name="DirectoryRemoveRecFlag"
+    uuid="455aabf0-7692-48f6-9061-f21579b65769"
+    >
+    <desc>
+      TODO
+    </desc>
+
+    <const name="None"                    value="0">
+      <desc>No flag set.</desc>
+    </const>    
+    <const name="ContentAndDir"           value="1">
+      <desc>TODO</desc>
+    </const>    
+    <const name="ContentOnly"             value="2">
+      <desc>TODO</desc>
+    </const>    
+  </enum>
+  
+  <enum
+    name="PathRenameFlag"
+    uuid="f3baa09f-c758-453d-b91c-c7787d76351d"
+    >
+    <desc>
+      TODO
+    </desc>
+
+    <const name="None"                    value="0">
+      <desc>No flag set.</desc>
+    </const>    
+    <const name="NoReplace"               value="1">
+      <desc>TODO</desc>
+    </const>  
+    <const name="Replace"                 value="2">
+      <desc>TODO</desc>
+    </const>  
+    <const name="NoSymlinks"              value="4">
+      <desc>TODO</desc>
+    </const>  
+  </enum>
+  
+  <enum
+    name="ProcessCreateFlag"
+    uuid="91c8aba8-2e62-4fe5-b744-fcbd607971e2"
+    >
+    <desc>
+      Guest process execution flags.
+    </desc>
+
+    <const name="None"                    value="0">
+      <desc>No flag set.</desc>
+    </const>
+    <const name="WaitForProcessStartOnly" value="1">
+      <desc>Only use the specified timeout value to wait for starting the guest process - the guest
+        process itself then uses an infinite timeout.</desc>
+    </const>
+    <const name="IgnoreOrphanedProcesses" value="2">
+      <desc>Do not report an error when executed processes are still alive when VBoxService or the guest OS is shutting down.</desc>
+    </const>
+    <const name="Hidden"                  value="4">
+      <desc>Do not show the started process according to the guest OS guidelines.</desc>
+    </const>
+    <const name="NoProfile"               value="8">
+      <desc>Do not use the user's profile data when exeuting a process. Only available for Windows guests.</desc>
+    </const>
+    <const name="WaitForStdOut"           value="16">
+      <desc>The guest process waits until all data from stdout is read out.</desc>
+    </const>
+    <const name="WaitForStdErr"           value="32">
+      <desc>The guest process waits until all data from stderr is read out.</desc>
+    </const>
+  </enum>
+  
+  <enum
+    name="ProcessPriority"
+    uuid="ee8cac50-e232-49fe-806b-d1214d9c2e49"
+    >
+    <desc>
+      TODO
+    </desc>
+
+    <const name="Invalid"                 value="0">
+      <desc>TODO</desc>
+    </const>    
+    <const name="Default"                 value="1">
+      <desc>TODO</desc>
+    </const>    
+  </enum>
+  
+  <enum
+    name="SymlinkType"
+    uuid="37794668-f8f1-4714-98a5-6f8fa2ed0118"
+    >
+    <desc>
+      TODO
+    </desc>
+
+    <const name="Unknown"                 value="0">
+      <desc>TODO</desc>
+    </const>    
+    <const name="Directory"               value="1">
+      <desc>TODO</desc>
+    </const>    
+    <const name="File"                    value="2">
+      <desc>TODO</desc>
+    </const>    
+  </enum>
+  
+  <enum
+    name="SymlinkReadFlag"
+    uuid="b7fe2b9d-790e-4b25-8adf-1ca33026931f"
+    >
+    <desc>
+      TODO
+    </desc>
+
+    <const name="None"                    value="0">
+      <desc>TODO.</desc>
+    </const>    
+    <const name="NoSymlinks"              value="1">
+      <desc>TODO</desc>
+    </const>    
+  </enum>
+  
+  <enum
+    name="ProcessStatus"
+    uuid="4d52368f-5b48-4bfe-b486-acf89139b52f"
+    >
+    <desc>
+      Guest process execution status.
+    </desc>
+    <const name="Undefined"               value="0">
+      <desc>Process is in an undefined state.</desc>
+    </const>
+
+    <const name="Starting"                value="10">
+      <desc>TODO</desc>
+    </const>
+    <const name="Started"                 value="100">
+      <desc>Process has been started.</desc>
+    </const>
+    <const name="Paused"                  value="110">
+      <desc>TODO</desc>
+    </const>
+    <const name="Terminating"             value="480">
+      <desc>TODO</desc>
+    </const>
+    <const name="TerminatedNormally"      value="500">
+      <desc>Process terminated normally.</desc>
+    </const>
+    <const name="TerminatedSignal"        value="510">
+      <desc>Process terminated via signal.</desc>
+    </const>
+    <const name="TerminatedAbnormally"    value="511">
+      <desc>Process terminated abnormally.</desc>
+    </const>
+     <const name="TimedOutKilled"         value="512">
+      <desc>Process timed out and was killed.</desc>
+    </const>
+    <const name="TimedOutAbnormally"      value="513">
+      <desc>Process timed out and was not killed successfully.</desc>
+    </const>
+    <const name="Down"                    value="600">
+      <desc>Service/OS is stopping, process was killed.</desc>
+    </const>
+    <const name="Error"                   value="800">
+      <desc>Something went wrong (error code in flags).</desc>
+    </const>
+  </enum>
+  
+  <enum
+    name="FsObjType"
+    uuid="a1ed437c-b3c3-4ca2-b19c-4239d658d5e8"
+    >
+    <desc>
+      TODO
+    </desc>
+
+    <const name="Undefined"               value="0">
+      <desc>TODO</desc>
+    </const>    
+    <const name="FIFO"                    value="1">
+      <desc>TODO</desc>
+    </const>    
+    <const name="DevChar"                 value="10">
+      <desc>TODO</desc>
+    </const>    
+    <const name="DevBlock"                value="11">
+      <desc>TODO</desc>
+    </const>    
+    <const name="Directory"               value="50">
+      <desc>TODO</desc>
+    </const>    
+    <const name="File"                    value="80">
+      <desc>TODO</desc>
+    </const>    
+    <const name="Symlink"                 value="100">
+      <desc>TODO</desc>
+    </const>    
+    <const name="Socket"                  value="200">
+      <desc>TODO</desc>
+    </const>    
+    <const name="Whiteout"                value="400">
+      <desc>TODO</desc>
+    </const>    
   </enum>
 
   <enum
@@ -8812,10 +9377,1250 @@
       <desc>The entry type.</desc>
     </attribute>
   </interface>
+  
+  <interface
+    name="IGuestSession" extends="$unknown"
+    uuid="a8bbf136-3f0d-42cd-9fd3-c5816adb10a0"
+    wsmap="managed"
+    >
+    
+    <attribute name="user" type="wstring" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    
+    <attribute name="domain" type="wstring" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    
+    <attribute name="name" type="wstring" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    
+    <attribute name="id" type="unsigned long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    
+    <attribute name="timeout" type="unsigned long" readonly="no">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    
+    <attribute name="environment" type="wstring" safearray="yes">
+      <desc>
+        TODO
+      </desc>
+    </attribute>
+    
+    <attribute name="processes" type="IGuestProcess" readonly="yes" safearray="yes">
+      <desc>
+        TODO
+      </desc>
+    </attribute>
+    
+    <attribute name="directories" type="IGuestDirectory" readonly="yes" safearray="yes">
+      <desc>
+        TODO
+      </desc>
+    </attribute>
+    
+    <attribute name="files" type="IGuestFile" readonly="yes" safearray="yes">
+      <desc>
+        TODO
+      </desc>
+    </attribute>
+    
+    <method name="close">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+    </method>
+    
+    <method name="copyFrom">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="source" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="dest" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="CopyFileFlag" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="progress" type="IProgress" dir="return">
+        <desc>Progress object to track the operation completion.</desc>
+      </param>
+    </method>
+    
+    <method name="copyTo">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="source" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="dest" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="CopyFileFlag" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="progress" type="IProgress" dir="return">
+        <desc>Progress object to track the operation completion.</desc>
+      </param>
+    </method>
+    
+    <method name="directoryCreate">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="mode" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="DirectoryCreateFlag" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="directory" type="IGuestDirectory" dir="return">
+        <desc>Optional.</desc>
+      </param>
+    </method>
+    
+    <method name="directoryCreateTemp">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="templateName" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="mode" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="directory" type="IGuestDirectory" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="directoryExists">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="exists" type="boolean" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="directoryOpen">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="filter" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="directory" type="IGuestDirectory" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="directoryQueryInfo">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="info" type="IGuestFsObjInfo" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="directoryRemove">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="directoryRemoveRecursive">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="DirectoryRemoveRecFlag" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="progress" type="IProgress" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="directoryRename">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="source" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="dest" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="PathRenameFlag" dir="in" safearray="yes"> 
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="directorySetACL">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="acl" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="environmentClear">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+    </method>
+    
+    <method name="environmentGet">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="name" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="value" type="wstring" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="environmentSet">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="name" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="value" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="environmentUnset">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="name" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="fileCreateTemp">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="templateName" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="mode" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="file" type="IGuestFile" dir="return">
+        <desc>Optional.</desc>
+      </param>
+    </method>
+    
+    <method name="fileExists">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="exists" type="boolean" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="fileOpen">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="openMode" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="disposition" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="creationMode" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="offset" type="long long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="file" type="IGuestFile" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="fileQueryInfo">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="info" type="IGuestFsObjInfo" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="fileQuerySize">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="size" type="long long" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="fileRename">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="source" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="dest" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="PathRenameFlag" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="fileSetACL">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="file" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="acl" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="processCreate">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="command" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="arguments" type="wstring" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="environment" type="wstring" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="ProcessCreateFlag" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="timeoutMS" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="guestProcess" type="IGuestProcess" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="processCreateEx">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="command" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="arguments" type="wstring" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="environment" type="wstring" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="ProcessCreateFlag" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="timeoutMS" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="priority" type="ProcessPriority" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="affinity" type="long" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="guestProcess" type="IGuestProcess" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="processGet">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="pid" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="guestProcess" type="IGuestProcess" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="symlinkCreate">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="source" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="target" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="type" type="SymlinkType" dir="in">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="symlinkExists">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="symlink" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="exists" type="boolean" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="symlinkRead">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="symlink" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="SymlinkReadFlag" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="target" type="wstring" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="symlinkRemoveDirectory">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="path" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="symlinkRemoveFile">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="file" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+  </interface>    
 
   <interface
+    name="IProcess" extends="$unknown"
+    uuid="896df50a-c5d1-4892-8bc6-b78d0c1f4e33"
+    wsmap="managed"
+    >
+    <desc>
+      TODO
+    </desc>
+    <attribute name="PID" type="unsigned long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="status" type="ProcessStatus" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="exitCode" type="long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="environment" type="wstring" readonly="yes" safearray="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="arguments" type="wstring" readonly="yes" safearray="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="executablePath" type="wstring" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="name" type="wstring" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    
+    <method name="waitFor">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="waitFor" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="timeoutMS" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="reason" type="ProcessWaitResult" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="waitForArray">
+      <desc>
+        Scriptable version of <link to="#waitFor" />.
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="waitFor" type="ProcessWaitForFlag" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="timeoutMS" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="reason" type="ProcessWaitResult" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="read">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="handle" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="size" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="timeoutMS" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="data" type="octet" dir="return" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="write">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="handle" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="unsigned long" dir="in">
+        <desc>
+          <link to="ProcessInputFlag"/> flags.
+        </desc>
+      </param>
+      <param name="data" type="octet" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="timeoutMS" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="written" type="unsigned long" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="WriteArray">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="handle" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="flags" type="ProcessInputFlag" dir="in" safearray="yes">
+        <desc>
+          <link to="ProcessInputFlag"/> flags.
+        </desc>
+      </param>
+      <param name="data" type="octet" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="timeoutMS" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="written" type="unsigned long" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="terminate">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+    </method>
+  </interface>
+  
+  <interface
+    name="IGuestProcess" extends="IProcess"
+    uuid="dfa39a36-5d43-4840-a025-67ea956b3111"
+    wsmap="managed"
+    >
+    <desc>
+      TODO
+    </desc>
+  </interface>
+  
+  <interface
+    name="IDirectory" extends="$unknown"
+    uuid="e55ab5e5-4feb-452b-86ed-59cff4c581a3"
+    wsmap="managed"
+    >
+    <desc>
+      TODO
+    </desc>
+    
+    <attribute name="directoryName" type="wstring" readonly="yes">
+      <desc>
+        Full path of directory.
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    
+    <method name="read">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="objInfo" type="IFsObjInfo" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+  </interface>
+  
+  <interface
+    name="IGuestDirectory" extends="IDirectory"
+    uuid="af4a8ce0-0725-42b7-8826-46e3c7ba7357"
+    wsmap="managed"
+    >
+    <desc>
+      TODO
+    </desc>
+  </interface>
+    
+  <interface
+    name="IFile" extends="$unknown"
+    uuid="2615152d-35c0-4363-8325-ab7e1f2b8b34"
+    wsmap="managed"
+    >
+    <desc>
+      TODO
+    </desc>
+    
+    <attribute name="fileName" type="wstring" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="initialSize" type="long long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="openMode" type="unsigned long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="offset" type="long long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    
+    <method name="close">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+    </method>
+    
+    <method name="queryInfo">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="objInfo" type="IFsObjInfo" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>  
+        
+    <method name="read">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="toRead" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="read" type="unsigned long" dir="out">
+        <desc>TODO</desc>
+      </param>
+      <param name="data" type="octet" dir="return" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+    </method>
+        
+    <method name="readAt">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="offset" type="long long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="toRead" type="unsigned long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="read" type="unsigned long" dir="out">
+        <desc>TODO</desc>
+      </param>
+      <param name="data" type="octet" dir="return" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="seek">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="offset" type="long long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="whence" type="FileSeekType" dir="in">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="setACL">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="acl" type="wstring" dir="in">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="write">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="data" type="octet" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="written" type="unsigned long" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+    
+    <method name="writeAt">
+      <desc>
+        TODO
+
+        <result name="VBOX_E_NOT_SUPPORTED">
+          TODO
+        </result>
+      </desc>
+      <param name="offset" type="long long" dir="in">
+        <desc>TODO</desc>
+      </param>
+      <param name="data" type="octet" dir="in" safearray="yes">
+        <desc>TODO</desc>
+      </param>
+      <param name="written" type="unsigned long" dir="return">
+        <desc>TODO</desc>
+      </param>
+    </method>
+
+  </interface>
+  
+  <interface
+    name="IGuestFile" extends="IFile"
+    uuid="60661aec-145f-4d11-b80e-8ea151598093"
+    wsmap="managed"
+    >
+    <desc>
+      TODO
+    </desc>
+  </interface>
+  
+  <interface
+    name="IFsObjInfo" extends="$unknown"
+    uuid="4925335b-9aa6-4870-bda3-8edb09fb602c"
+    wsmap="managed"
+    >
+    <desc>
+      TODO
+    </desc>
+    
+    <attribute name="accessTime" type="long long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="allocatedSize" type="long long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="birthTime" type="long long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+        <attribute name="changeTime" type="long long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="deviceNumber" type="unsigned long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="fileAtttributes" type="wstring" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="generationId" type="unsigned long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="GID" type="unsigned long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="groupName" type="wstring" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="hardLinks" type="unsigned long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="modificationTime" type="long long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="name" type="wstring" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="nodeId" type="long long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="nodeIdDevice" type="unsigned long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>      
+    <attribute name="objectSize" type="long long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="type" type="FsObjType" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>      
+    <attribute name="UID" type="unsigned long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="userFlags" type="unsigned long" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>
+    <attribute name="userName" type="wstring" readonly="yes">
+      <desc>
+        TODO
+        <note>
+          TODO
+        </note>
+      </desc>
+    </attribute>  
+    
+  </interface>
+  
+  <interface
+    name="IGuestFsObjInfo" extends="IFsObjInfo"
+    uuid="d5cf678e-3484-4e4a-ac55-329e15462e18"
+    wsmap="managed"
+    >
+    <desc>
+      TODO
+    </desc>
+  </interface>
+  
+  <interface
     name="IGuest" extends="$unknown"
-    uuid="88696240-7411-4fe6-bb5e-ef56fb8a61f3"
+    uuid="9e0b07b1-490f-4413-8955-0a16515aac12"
     wsmap="managed"
     >
     <desc>
@@ -8870,6 +10675,10 @@
       </desc>
     </attribute>
 
+    <attribute name="sessions" type="IGuestSession" readonly="yes" safearray="yes">
+      <desc>TODO</desc>
+    </attribute>
+    
     <attribute name="memoryBalloonSize" type="unsigned long">
       <desc>Guest system memory balloon size in megabytes (transient property).</desc>
     </attribute>
@@ -9199,6 +11008,53 @@
       </param>
     </method>
 
+    <method name="createSession">
+      <desc>
+        TODO
+      </desc>
+      <param name="user" type="wstring" dir="in">
+        <desc>
+          TODO
+        </desc>
+      </param>
+      <param name="password" type="wstring" dir="in">
+        <desc>
+          TODO
+        </desc>
+      </param>
+      <param name="domain" type="wstring" dir="in">
+        <desc>
+          TODO
+        </desc>
+      </param>
+      <param name="sessionName" type="wstring" dir="in">
+        <desc>
+          TODO
+        </desc>
+      </param>
+      <param name="guestSession" type="IGuestSession" dir="return">
+        <desc>
+          TODO
+        </desc>
+      </param>
+    </method>
+    
+    <method name="findSession">
+      <desc>
+        TODO
+      </desc>      
+      <param name="sessionName" type="wstring" dir="in">
+        <desc>
+          TODO
+        </desc>
+      </param>
+      <param name="sessions" type="IGuestSession" safearray="yes" dir="return">
+        <desc>
+          TODO
+        </desc>
+      </param>
+    </method>
+    
     <method name="executeProcess">
       <desc>
         Executes an existing program inside the guest VM.
@@ -10011,7 +11867,7 @@
               to contain the disk data associated with the snapshot being deleted.
 
               When deleting the current snapshot, the <link to="IMachine::currentSnapshot" />
-              attribute is set to the current snapshot's parent or NULL if it
+              attribute is set to the current snapshot's parent or @c null if it
               has no parent. Otherwise the attribute is unchanged.
           </li>
       </ul>
@@ -10216,7 +12072,7 @@
     </const>
     <const name="MultiAttach"       value="5">
       <desc>
-        A medium which is is indirectly attached, so that one base medium can
+        A medium which is indirectly attached, so that one base medium can
         be used for several VMs which have their own differencing medium to
         store their modifications. In some sense a variant of Immutable
         with unset AutoReset flag in each differencing medium.
@@ -10518,7 +12374,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
 
   <interface
     name="IMedium" extends="$unknown"
-    uuid="53f9cc0c-e0fd-40a5-a404-a7a5272082cd"
+    uuid="29989373-b111-4654-8493-2e1176cba890"
     wsmap="managed"
     >
     <desc>
@@ -10997,7 +12853,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
       </desc>
     </attribute>
 
-    <method name="setIDs">
+    <method name="setIds">
       <desc>
         Changes the UUID and parent UUID for a hard disk medium.
       </desc>
@@ -11655,6 +13511,52 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
       <param name="progress" type="IProgress" dir="return">
         <desc>Progress object to track the operation completion.</desc>
       </param>
+    </method>
+
+    <method name="cloneToBase">
+    <desc>
+    Starts creating a clone of this medium in the format and at the
+    location defined by the @a target argument.
+
+    The target medium must be either in <link to="MediumState_NotCreated"/>
+    state (i.e. must not have an existing storage unit) or in
+    <link to="MediumState_Created"/> state (i.e. created and not locked, and
+    big enough to hold the data or else the copy will be partial). Upon
+    successful completion, the cloned medium will contain exactly the
+    same sector data as the medium being cloned, except that in the
+    first case a new UUID for the clone will be randomly generated, and in
+    the second case the UUID will remain unchanged.
+
+    The @a parent argument defines which medium will be the parent
+    of the clone. In this case the clone will be a base image, i.e. 
+    completely independent. It is possible to specify an arbitrary 
+    medium for this parameter, including the parent of the
+    medium which is being cloned. Even cloning to a child of the source
+    medium is possible. Note that when cloning to an existing image, the
+    @a parent argument is ignored.
+
+    After the returned progress object reports that the operation is
+    successfully complete, the target medium gets remembered by this
+    VirtualBox installation and may be attached to virtual machines.
+
+    <note>
+    This medium will be placed to <link to="MediumState_LockedRead"/>
+    state for the duration of this operation.
+    </note>
+    <result name="E_NOTIMPL">
+    The specified cloning variant is not supported at the moment.
+    </result>
+    </desc>
+    <param name="target" type="IMedium" dir="in">
+    <desc>Target medium.</desc>
+    </param>
+    <param name="variant" type="unsigned long" dir="in">
+    <desc>Exact image variant which should be created (as a combination of
+    <link to="MediumVariant" /> flags).</desc>
+    </param>
+    <param name="progress" type="IProgress" dir="return">
+    <desc>Progress object to track the operation completion.</desc>
+    </param>
     </method>
 
     <!-- other methods -->
@@ -12633,7 +14535,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
 
   <interface
     name="IDisplay" extends="$unknown"
-    uuid="4b75c45c-e22e-4b75-b7cd-7ce9a83bb36e"
+    uuid="b83ee395-8679-40ca-8d60-1a0cbe724930"
     wsmap="managed"
     >
     <desc>
@@ -12697,10 +14599,36 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
         </result>
 
       </desc>
+      <param name="display" type="unsigned long" dir="in">
+        <desc>
+          The number of the guest display to send the hint to.
+        </desc>
+      </param>
+      <param name="enabled" type="boolean" dir="in">
+        <desc>
+          @c True, if this guest screen is enabled,
+          @c False otherwise.
+        </desc>
+      </param>
+      <param name="changeOrigin" type="boolean" dir="in">
+        <desc>
+          @c True, if the origin of the guest screen should be changed,
+          @c False otherwise.
+        </desc>
+      </param>
+      <param name="originX" type="long" dir="in">
+        <desc>
+          The X origin of the guest screen.
+        </desc>
+      </param>
+      <param name="originY" type="long" dir="in">
+        <desc>
+          The Y origin of the guest screen.
+        </desc>
+      </param>
       <param name="width" type="unsigned long" dir="in"/>
       <param name="height" type="unsigned long" dir="in"/>
       <param name="bitsPerPixel" type="unsigned long" dir="in"/>
-      <param name="display" type="unsigned long" dir="in"/>
     </method>
 
     <method name="setSeamlessMode">
@@ -13014,7 +14942,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
 
   <interface
     name="INetworkAdapter" extends="$unknown"
-    uuid="8b2e705c-0547-4008-b7bc-788757346092"
+    uuid="efa0f965-63c7-4c60-afdf-b1cc9943b9c0"
     wsmap="managed"
     >
     <desc>
@@ -13131,7 +15059,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
       </desc>
     </attribute>
 
-    <attribute name="natDriver" type="INATEngine" readonly="yes">
+    <attribute name="NATEngine" type="INATEngine" readonly="yes">
       <desc>
         Points to the NAT engine which handles the network address translation
         for this interface. This is active only when the interface actually uses
@@ -13845,7 +15773,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
 
   <interface
     name="IUSBController" extends="$unknown"
-    uuid="6fdcccc5-abd3-4fec-9387-2ad3914fc4a8"
+    uuid="01e6f13a-0580-452f-a40f-74e32a5e4921"
     wsmap="managed"
     >
     <attribute name="enabled" type="boolean">
@@ -13857,7 +15785,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
       </desc>
     </attribute>
 
-    <attribute name="enabledEhci" type="boolean">
+    <attribute name="enabledEHCI" type="boolean">
       <desc>
         Flag whether the USB EHCI controller is present in the
         guest system. If disabled, the virtual guest hardware will
@@ -14726,7 +16654,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
 
   <interface
     name="IInternalSessionControl" extends="$unknown"
-    uuid="9ddb5449-f463-47cb-a717-d6f22da3b3a2"
+    uuid="3e83963a-1c3b-400d-8c5f-f2d077b0a597"
     internal="yes"
     wsmap="suppress"
     >
@@ -14766,6 +16694,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
 
       </desc>
       <param name="machine" type="IMachine" dir="in"/>
+      <param name="lockType" type="LockType" dir="in"/>
     </method>
 
     <method name="assignRemoteMachine">
@@ -14926,6 +16855,15 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
       </desc>
       <param name="clipboardMode" type="ClipboardMode" dir="in">
         <desc>The new shared clipboard mode.</desc>
+      </param>
+    </method>
+
+    <method name="onDragAndDropModeChange">
+      <desc>
+        Notification when the drag'n'drop mode changes.
+      </desc>
+      <param name="dragAndDropMode" type="DragAndDropMode" dir="in">
+        <desc>The new mode for drag'n'drop.</desc>
       </param>
     </method>
 
@@ -16095,12 +18033,12 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
 
   <interface
     name="INATEngine" extends="$unknown"
-    uuid="4b286616-eb03-11de-b0fb-1701eca42246"
+    uuid="26451b99-3b2d-4dcb-8e4b-d63654218175"
     wsmap="managed"
     >
     <desc>Interface for managing a NAT engine which is used with a virtual machine. This
       allows for changing NAT behavior such as port-forwarding rules. This interface is
-      used in the <link to="INetworkAdapter::natDriver" /> attribute.</desc>
+      used in the <link to="INetworkAdapter::NATEngine" /> attribute.</desc>
     <attribute name="network" type="wstring">
       <desc>The network attribute of the NAT engine (the same value is used with built-in
         DHCP server to fill corresponding fields of DHCP leases).</desc>
@@ -16110,15 +18048,15 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
           <note>Changing this does not change binding of port forwarding.</note>
       </desc>
     </attribute>
-    <attribute name="tftpPrefix" type="wstring">
+    <attribute name="TFTPPrefix" type="wstring">
       <desc>TFTP prefix attribute which is used with the built-in DHCP server to fill
         the corresponding fields of DHCP leases.</desc>
     </attribute>
-    <attribute name="tftpBootFile" type="wstring">
+    <attribute name="TFTPBootFile" type="wstring">
       <desc>TFTP boot file attribute which is used with the built-in DHCP server to fill
         the corresponding fields of DHCP leases.</desc>
     </attribute>
-    <attribute name="tftpNextServer" type="wstring">
+    <attribute name="TFTPNextServer" type="wstring">
       <desc>TFTP server attribute which is used with the built-in DHCP server to fill
         the corresponding fields of DHCP leases.
         <note>The preferred form is IPv4 addresses.</note>
@@ -16127,14 +18065,14 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
     <attribute name="aliasMode" type="unsigned long">
       <desc></desc>
     </attribute>
-    <attribute name="dnsPassDomain" type="boolean">
+    <attribute name="DNSPassDomain" type="boolean">
       <desc>Whether the DHCP server should pass the DNS domain used by the host.</desc>
     </attribute>
-    <attribute name="dnsProxy" type="boolean">
+    <attribute name="DNSProxy" type="boolean">
       <desc>Whether the DHCP server (and the DNS traffic by NAT) should pass the address
         of the DNS proxy and process traffic using DNS servers registered on the host.</desc>
     </attribute>
-    <attribute name="dnsUseHostResolver" type="boolean">
+    <attribute name="DNSUseHostResolver" type="boolean">
       <desc>Whether the DHCP server (and the DNS traffic by NAT) should pass the address
         of the DNS proxy and process traffic using the host resolver mechanism.</desc>
     </attribute>
@@ -16180,14 +18118,14 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
         <param name="proto" type="NATProtocol" dir="in">
           <desc>Protocol handled with the rule.</desc>
         </param>
-        <param name="hostIp" type="wstring" dir="in">
+        <param name="hostIP" type="wstring" dir="in">
           <desc>IP of the host interface to which the rule should apply. An empty ip address is
             acceptable, in which case the NAT engine binds the handling socket to any interface.</desc>
         </param>
         <param name="hostPort" type="unsigned short" dir="in">
           <desc>The port number to listen on.</desc>
         </param>
-        <param name="guestIp" type="wstring" dir="in">
+        <param name="guestIP" type="wstring" dir="in">
           <desc>The IP address of the guest which the NAT engine will forward matching packets
             to. An empty IP address is acceptable, in which case the NAT engine will forward
             packets to the first DHCP lease (x.x.x.15).</desc>
@@ -16678,7 +18616,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
   -->
   <enum
     name="VBoxEventType"
-    uuid="100cf5c8-7dd4-4600-8d75-636d211479c9"
+    uuid="0d67e79e-b7b1-4919-aab3-b36866075515"
     >
 
     <desc>
@@ -16911,9 +18849,9 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
         See <link to="INATRedirectEvent">INATRedirectEvent</link>.
       </desc>
     </const>
-    <const name="OnHostPciDevicePlug" value="67">
+    <const name="OnHostPCIDevicePlug" value="67">
       <desc>
-        See <link to="IHostPciDevicePlugEvent">IHostPciDevicePlugEvent</link>.
+        See <link to="IHostPCIDevicePlugEvent">IHostPCIDevicePlugEvent</link>.
       </desc>
     </const>
     <const name="OnVBoxSVCAvailabilityChanged" value="68">
@@ -16941,9 +18879,14 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
         See <link to="IClipboardModeChangedEvent">IClipboardModeChangedEvent</link>.
       </desc>
     </const>
+    <const name="OnDragAndDropModeChanged" value="73">
+      <desc>
+        See <link to="IDragAndDropModeChangedEvent">IDragAndDropModeChangedEvent</link>.
+      </desc>
+    </const>
 
     <!-- Last event marker -->
-    <const name="Last" value="73">
+    <const name="Last" value="74">
       <desc>
         Must be last event, used for iterations and structures relying on numerical event values.
       </desc>
@@ -17704,14 +19647,29 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
   </interface>
 
   <interface
+    name="IDragAndDropModeChangedEvent" extends="IEvent"
+    uuid="e90b8850-ac8e-4dff-8059-4100ae2c3c3d"
+    wsmap="managed" autogen="VBoxEvent" id="OnDragAndDropModeChanged"
+    >
+    <desc>
+      Notification when the drag'n'drop mode changes.
+    </desc>
+    <attribute name="dragAndDropMode" type="DragAndDropMode" readonly="yes">
+      <desc>
+        The new drag'n'drop mode.
+      </desc>
+    </attribute>
+  </interface>
+
+  <interface
     name="ICPUChangedEvent" extends="IEvent"
-    uuid="D0F0BECC-EE17-4D17-A8CC-383B0EB55E9D"
+    uuid="4da2dec7-71b2-4817-9a64-4ed12c17388e"
     wsmap="managed" autogen="VBoxEvent" id="OnCPUChanged"
     >
     <desc>
       Notification when a CPU changes.
     </desc>
-    <attribute name="cpu" type="unsigned long" readonly="yes">
+    <attribute name="CPU" type="unsigned long" readonly="yes">
       <desc>
         The CPU which changed.
       </desc>
@@ -18162,7 +20120,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
 
   <interface
     name="INATRedirectEvent" extends="IMachineEvent"
-    uuid="57DE97D7-3CBB-42A0-888F-610D5832D16B"
+    uuid="24eef068-c380-4510-bc7c-19314a7352f1"
     wsmap="managed" autogen="VBoxEvent" id="OnNATRedirect"
     >
     <desc>
@@ -18188,7 +20146,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
         Protocol (TCP or UDP) of the redirect rule.
       </desc>
     </attribute>
-    <attribute name="hostIp"  type="wstring" readonly="yes">
+    <attribute name="hostIP"  type="wstring" readonly="yes">
       <desc>
         Host ip address to bind socket on.
       </desc>
@@ -18198,7 +20156,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
         Host port to bind socket on.
       </desc>
     </attribute>
-    <attribute name="guestIp"  type="wstring" readonly="yes">
+    <attribute name="guestIP"  type="wstring" readonly="yes">
       <desc>
         Guest ip address to redirect to.
       </desc>
@@ -18211,17 +20169,17 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
   </interface>
 
   <interface
-    name="IHostPciDevicePlugEvent" extends="IMachineEvent"
+    name="IHostPCIDevicePlugEvent" extends="IMachineEvent"
     waitable="yes"
-    uuid="9cebfc27-c579-4965-8eb7-d31794cd7dcf"
-    wsmap="managed" autogen="VBoxEvent" id="OnHostPciDevicePlug"
+    uuid="a0bad6df-d612-47d3-89d4-db3992533948"
+    wsmap="managed" autogen="VBoxEvent" id="OnHostPCIDevicePlug"
     >
     <desc>
       Notification when host PCI device is plugged/unplugged. Plugging
       usually takes place on VM startup, unplug - when
-      <link to="IMachine::detachHostPciDevice"/> is called.
+      <link to="IMachine::detachHostPCIDevice"/> is called.
 
-      <see><link to="IMachine::detachHostPciDevice"/></see>
+      <see><link to="IMachine::detachHostPCIDevice"/></see>
 
     </desc>
 
@@ -18238,7 +20196,7 @@ Snapshot 1 (B.vdi)            Snapshot 1 (B.vdi)
       </desc>
     </attribute>
 
-    <attribute name="attachment" type="IPciDeviceAttachment" readonly="yes">
+    <attribute name="attachment" type="IPCIDeviceAttachment" readonly="yes">
       <desc>
         Attachment info for this device.
       </desc>

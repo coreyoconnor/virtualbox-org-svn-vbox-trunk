@@ -220,6 +220,12 @@ typedef struct IEMCPU
     uint8_t                 uCpl;
     /** The current CPU execution mode (CS). */
     IEMMODE                 enmCpuMode;
+    /** Info status code that needs to be propagated to the IEM caller.
+     * This cannot be passed internally, as it would complicate all success
+     * checks within the interpreter making the code larger and almost impossible
+     * to get right.  Instead, we'll store status codes to pass on here.  Each
+     * source of these codes will perform appropriate sanity checks. */
+    int32_t                 rcPassUp;
 
     /** @name Statistics
      * @{  */
@@ -230,6 +236,16 @@ typedef struct IEMCPU
     /** The number of bytes data or stack written (mostly for IEMExecOneEx).
      * This may contain uncommitted writes.  */
     uint32_t                cbWritten;
+    /** Counts the VERR_IEM_INSTR_NOT_IMPLEMENTED returns. */
+    uint32_t                cRetInstrNotImplemented;
+    /** Counts the VERR_IEM_ASPECT_NOT_IMPLEMENTED returns. */
+    uint32_t                cRetAspectNotImplemented;
+    /** Counts informational statuses returned (other than VINF_SUCCESS). */
+    uint32_t                cRetInfStatuses;
+    /** Counts other error statuses returned. */
+    uint32_t                cRetErrStatuses;
+    /** Number of times rcPassUp has been used. */
+    uint32_t                cRetPassUpStatus;
 #ifdef IEM_VERIFICATION_MODE
     /** The Number of I/O port reads that has been performed. */
     uint32_t                cIOReads;
@@ -309,6 +325,13 @@ typedef struct IEMCPU
         uint32_t            u32Alignment4; /**< Alignment padding. */
 #endif
     } aMemMappings[3];
+
+    /** Locking records for the mapped memory. */
+    union
+    {
+        PGMPAGEMAPLOCK      Lock;
+        uint64_t            au64Padding[2];
+    } aMemMappingLocks[3];
 
     /** Bounce buffer info.
      * This runs in parallel to aMemMappings. */

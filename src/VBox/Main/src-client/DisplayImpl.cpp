@@ -47,6 +47,11 @@
 
 #include <VBox/com/array.h>
 
+#ifdef VBOX_WITH_VPX_MAIN
+# include "EncodeAndWrite.h"
+  PVIDEORECCONTEXT pVideoRecContext;
+#endif
+
 /**
  * Display driver instance data.
  *
@@ -2126,8 +2131,9 @@ STDMETHODIMP Display::GetFramebuffer (ULONG aScreenId,
     return S_OK;
 }
 
-STDMETHODIMP Display::SetVideoModeHint(ULONG aWidth, ULONG aHeight,
-    ULONG aBitsPerPixel, ULONG aDisplay)
+STDMETHODIMP Display::SetVideoModeHint(ULONG aDisplay, BOOL aEnabled,
+                                       BOOL aChangeOrigin, LONG aOriginX, LONG aOriginY,
+                                       ULONG aWidth, ULONG aHeight, ULONG aBitsPerPixel)
 {
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
@@ -2135,6 +2141,12 @@ STDMETHODIMP Display::SetVideoModeHint(ULONG aWidth, ULONG aHeight,
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
     CHECK_CONSOLE_DRV (mpDrv);
+
+    /* XXX Ignore these parameters for now: */
+    NOREF(aChangeOrigin);
+    NOREF(aOriginX);
+    NOREF(aOriginY);
+    NOREF(aEnabled);
 
     /*
      * Do some rough checks for valid input
@@ -2160,12 +2172,10 @@ STDMETHODIMP Display::SetVideoModeHint(ULONG aWidth, ULONG aHeight,
     if (aDisplay >= cMonitors)
         return E_INVALIDARG;
 
-// sunlover 20070614: It is up to the guest to decide whether the hint is valid.
-//    ULONG vramSize;
-//    mParent->machine()->COMGETTER(VRAMSize)(&vramSize);
-//    /* enough VRAM? */
-//    if ((width * height * (bpp / 8)) > (vramSize * 1024 * 1024))
-//        return setError(E_FAIL, tr("Not enough VRAM for the selected video mode"));
+   /*
+    * sunlover 20070614: It is up to the guest to decide whether the hint is
+    * valid. Therefore don't do any VRAM sanity checks here!
+    */
 
     /* Have to release the lock because the pfnRequestDisplayChange
      * will call EMT.  */
@@ -3234,6 +3244,15 @@ DECLCALLBACK(void) Display::displayRefreshCallback(PPDMIDISPLAYCONNECTOR pInterf
             }
         }
     }
+#ifdef VBOX_WITH_VPX_MAIN
+    VideoRecCopyToIntBuffer(pVideoRecContext, pDisplay->xOrigin, pDisplay->yOrigin,
+                            pDisplay->w, pDisplay->h, mPixelFormat,
+                            pDisplay->u16BitsPerPixel, mBytesPerLine, pDisplay->w,
+                            pDisplay->h, pDisplay->h, pDisplay->w,
+                            pu8Framebuffer, mTempRGBBuffer);
+#endif
+
+
 
 #ifdef DEBUG_sunlover
     STAM_PROFILE_STOP(&StatDisplayRefresh, a);
@@ -4211,6 +4230,15 @@ DECLCALLBACK(int) Display::drvConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg, uint
     pData->IConnector.pfnVBVAUpdateEnd      = Display::displayVBVAUpdateEnd;
     pData->IConnector.pfnVBVAResize         = Display::displayVBVAResize;
     pData->IConnector.pfnVBVAMousePointerShape = Display::displayVBVAMousePointerShape;
+#endif
+#ifdef VBOX_WITH_VPX_MAIN
+    rc = VideoRecContextCreate(&pVideoRecContext);
+    rc = RTCritSectInit(&mCritSect);
+    AssertReturn(rc == VINF_SUCCESS, E_UNEXPECTED);
+
+    if(rc == VINF_SUCCESS)
+        rc = VideoRecContextInit(pVideoRecContext, "test.webm", 800, 720);
+
 #endif
 
 

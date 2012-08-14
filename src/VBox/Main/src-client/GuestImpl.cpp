@@ -16,6 +16,7 @@
  */
 
 #include "GuestImpl.h"
+#include "GuestSessionImpl.h"
 
 #include "Global.h"
 #include "ConsoleImpl.h"
@@ -417,7 +418,7 @@ STDMETHODIMP Guest::COMGETTER(AdditionsRevision)(ULONG *a_puAdditionsRevision)
     return hrc;
 }
 
-STDMETHODIMP Guest::COMGETTER(Facilities)(ComSafeArrayOut(IAdditionsFacility*, aFacilities))
+STDMETHODIMP Guest::COMGETTER(Facilities)(ComSafeArrayOut(IAdditionsFacility *, aFacilities))
 {
     CheckComArgOutSafeArrayPointerValid(aFacilities);
 
@@ -428,6 +429,21 @@ STDMETHODIMP Guest::COMGETTER(Facilities)(ComSafeArrayOut(IAdditionsFacility*, a
 
     SafeIfaceArray<IAdditionsFacility> fac(mData.mFacilityMap);
     fac.detachTo(ComSafeArrayOutArg(aFacilities));
+
+    return S_OK;
+}
+
+STDMETHODIMP Guest::COMGETTER(Sessions)(ComSafeArrayOut(IGuestSession *, aSessions))
+{
+    CheckComArgOutSafeArrayPointerValid(aSessions);
+
+    AutoCaller autoCaller(this);
+    if (FAILED(autoCaller.rc())) return autoCaller.rc();
+
+    AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
+
+    SafeIfaceArray<IGuestSession> collection(mData.mGuestSessions);
+    collection.detachTo(ComSafeArrayOutArg(aSessions));
 
     return S_OK;
 }
@@ -828,7 +844,7 @@ STDMETHODIMP Guest::DragGHPending(ULONG uScreenId, ComSafeArrayOut(BSTR, formats
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
-#ifdef VBOX_WITH_DRAG_AND_DROP
+#if defined(VBOX_WITH_DRAG_AND_DROP) && defined(VBOX_WITH_DRAG_AND_DROP_GH)
     return m_pGuestDnD->dragGHPending(uScreenId, ComSafeArrayOutArg(formats), ComSafeArrayOutArg(allowedActions), pDefaultAction);
 #else /* VBOX_WITH_DRAG_AND_DROP */
     ReturnComNotImplemented();
@@ -844,7 +860,7 @@ STDMETHODIMP Guest::DragGHDropped(IN_BSTR bstrFormat, DragAndDropAction_T action
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
-#ifdef VBOX_WITH_DRAG_AND_DROP
+#if defined(VBOX_WITH_DRAG_AND_DROP) && defined(VBOX_WITH_DRAG_AND_DROP_GH)
     return m_pGuestDnD->dragGHDropped(bstrFormat, action, ppProgress);
 #else /* VBOX_WITH_DRAG_AND_DROP */
     ReturnComNotImplemented();
@@ -859,7 +875,7 @@ STDMETHODIMP Guest::DragGHGetData(ComSafeArrayOut(BYTE, data))
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
-#ifdef VBOX_WITH_DRAG_AND_DROP
+#if defined(VBOX_WITH_DRAG_AND_DROP) && defined(VBOX_WITH_DRAG_AND_DROP_GH)
     return m_pGuestDnD->dragGHGetData(ComSafeArrayOutArg(data));
 #else /* VBOX_WITH_DRAG_AND_DROP */
     ReturnComNotImplemented();
@@ -1119,4 +1135,4 @@ void Guest::setSupportedFeatures(uint32_t aCaps)
                    aCaps & VMMDEV_GUEST_SUPPORTS_GRAPHICS ? VBoxGuestFacilityStatus_Active : VBoxGuestFacilityStatus_Inactive,
                    0 /*fFlags*/, &TimeSpecTS);
 }
-/* vi: set tabstop=4 shiftwidth=4 expandtab: */
+

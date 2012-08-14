@@ -1222,17 +1222,19 @@ void context_clear_on_thread_detach()
     if (!old)
         return;
 
-    /* there is a currently assigned context,
-     * 2. now increase its ref count to ensure its dtor routine is not called while making set_current(NULL).
-     * This is needed since dtor can only be run with a wined3d lock held */
-    VBoxTlsRefAddRef(old);
+//    /* there is a currently assigned context,
+//     * 2. now increase its ref count to ensure its dtor routine is not called while making set_current(NULL).
+//     * This is needed since dtor can only be run with a wined3d lock held */
+//    VBoxTlsRefAddRef(old);
+
+    /* context_tls_dtor now does only memfree, so just call it right away */
 
     /* 3. now we can call context_set_current(NULL) */
     context_set_current(NULL);
 
-    /* 4. to avoid possible deadlocks we make an asynchronous call to a worker thread to make
-     * wined3d lock - context release - wined3d unlock from there. */
-    VBoxExtReleaseContextAsync(old);
+//    /* 4. to avoid possible deadlocks we make an asynchronous call to a worker thread to make
+//     * wined3d lock - context release - wined3d unlock from there. */
+//    VBoxExtReleaseContextAsync(old);
 }
 #endif
 
@@ -1529,7 +1531,11 @@ static DECLCALLBACK(void) context_tls_dtor(void* pvCtx)
  *
  *****************************************************************************/
 struct wined3d_context *context_create(IWineD3DSwapChainImpl *swapchain, IWineD3DSurfaceImpl *target,
-        const struct wined3d_format_desc *ds_format_desc)
+        const struct wined3d_format_desc *ds_format_desc
+#ifdef VBOX_WITH_WDDM
+        , struct VBOXUHGSMI *pHgsmi
+#endif
+        )
 {
     IWineD3DDeviceImpl *device = swapchain->device;
     const struct wined3d_gl_info *gl_info = &device->adapter->gl_info;
@@ -1545,6 +1551,14 @@ struct wined3d_context *context_create(IWineD3DSwapChainImpl *swapchain, IWineD3
     HDC hdc;
 
     TRACE("swapchain %p, target %p, window %p.\n", swapchain, target, swapchain->win_handle);
+
+#ifdef VBOX_WITH_WDDM
+    if (!pHgsmi)
+    {
+        ERR("HGSMI should be specified!");
+        return NULL;
+    }
+#endif
 
     ret = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ret));
     if (!ret)
@@ -1641,7 +1655,13 @@ struct wined3d_context *context_create(IWineD3DSwapChainImpl *swapchain, IWineD3
         goto out;
     }
 
-    ctx = pwglCreateContext(hdc);
+    ctx = pVBoxCreateContext(hdc
+#ifdef VBOX_WITH_WDDM
+            , pHgsmi
+#else
+            , NULL
+#endif
+            );
     if (device->numContexts)
     {
         if (!pwglShareLists(device->contexts[0]->glCtx, ctx))
@@ -1952,7 +1972,11 @@ struct wined3d_context *context_find_create(IWineD3DDeviceImpl *device, IWineD3D
     if (!context)
     {
         Assert(!device->NumberOfSwapChains);
-        context = context_create(swapchain, target, ds_format_desc);
+        context = context_create(swapchain, target, ds_format_desc
+#ifdef VBOX_WITH_WDDM
+                , device->pHgsmi
+#endif
+                );
     }
     else
     {

@@ -18,6 +18,10 @@
 SUB_DEPTH = ../../..
 include $(KBUILD_PATH)/subheader.kmk
 
+# Make sure our Config.kmk is included.
+ifndef VBOX_DEVICES_CONFIG_KMK_INCLUDED
+ include $(PATH_SUB_CURRENT)/Config.kmk
+endif
 
 # Include sub-makefiles.
 include $(PATH_SUB_CURRENT)/testcase/Makefile.kmk
@@ -32,13 +36,14 @@ else if defined(VBOX_WITH_PXE_ROM)
  endif
 endif
 if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
- ifdef VBOX_WITH_NEW_BIOS
-  include $(PATH_SUB_CURRENT)/PC/BIOS-new/Makefile.kmk
+ include $(PATH_SUB_CURRENT)/BiosCommonCode/Makefile.kmk
+ include $(PATH_SUB_CURRENT)/PC/BIOS/Makefile.kmk
+ ifdef VBOX_WITH_NEW_VGABIOS
+  include $(PATH_SUB_CURRENT)/Graphics/BIOS-new/Makefile.kmk
  else
-  include $(PATH_SUB_CURRENT)/PC/BIOS/Makefile.kmk
+  include $(PATH_SUB_CURRENT)/Graphics/BIOS/Makefile.kmk
  endif
- include $(PATH_SUB_CURRENT)/Graphics/BIOS/Makefile.kmk
- ifdef VBOX_WITH_EFI
+ if defined(VBOX_WITH_EFI) && !defined(VBOX_WITH_OVMF)
   include $(PATH_SUB_CURRENT)/EFI/Thunk/Makefile.kmk
  endif
 
@@ -65,7 +70,7 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
  endif
  ifdef VBOX_WITH_USB
   VBoxDDU_DEFS           += VBOX_WITH_USB IN_USBLIB
-  VBoxDDU_SDKS.win        = WINPSDK W2K3DDK
+  VBoxDDU_SDKS.win        = ReorderCompilerIncs $(VBOX_WINPSDK) $(VBOX_WINDDK)
   if defined(VBOX_WITH_EHCI_IMPL) && !defined(VBOX_WITH_EXTPACK_PUEL)
    VBoxDDU_DEFS          += VBOX_WITH_EHCI_IMPL
   endif
@@ -73,7 +78,7 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
    VBoxDDU_DEFS.darwin   += VBOX_WITH_NEW_USB_CODE_ON_DARWIN
   endif
  else
-  VBoxDDU_SDKS.win        = WINPSDK
+  VBoxDDU_SDKS.win        = ReorderCompilerIncs $(VBOX_WINPSDK)
  endif
  VBoxDDU_SOURCES          = \
  	Storage/VSCSI/VSCSIDevice.cpp \
@@ -96,7 +101,7 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
  	$(PATH_STAGE_LIB)/USBLib$(VBOX_SUFF_LIB)
   VBoxDDU_LIBS.win       += \
  	$(PATH_STAGE_LIB)/VBoxDrvCfg$(VBOX_SUFF_LIB) \
- 	$(PATH_SDK_W2K3DDK_LIB)/Newdev.lib
+ 	$(PATH_SDK_$(VBOX_WINDDK)_LIB)/Newdev.lib
  endif
  ifeq ($(KBUILD_TARGET),l4)
   VBoxDDU_LIBS           += \
@@ -126,8 +131,8 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
  # VBoxDD (shared object)
  #
  VBoxDD_TEMPLATE         = VBoxR3DllWarnNoPic
- VBoxDD_SDKS.win         = WINPSDK DXSDK W2K3DDK VBOX_NTDLL
- Storage/DrvHostDVD.cpp_SDKS.win = W2K3DDK
+ VBoxDD_SDKS.win         = ReorderCompilerIncs $(VBOX_WINPSDK) $(VBOX_WINDDK) VBOX_NTDLL
+ Storage/DrvHostDVD.cpp_SDKS.win = ReorderCompilerIncs $(VBOX_WINDDK)
  VBoxDD_INCS             = \
  	build \
  	Network/slirp
@@ -421,8 +426,7 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
  ifdef VBOX_WITH_AHCI
   VBoxDD_DEFS           += VBOX_WITH_AHCI IN_AHCI_R3
   VBoxDD_SOURCES        += \
- 	Storage/DevAHCI.cpp \
- 	Storage/ATAController.cpp
+ 	Storage/DevAHCI.cpp 
  endif
 
  ifdef VBOX_WITH_BUSLOGIC
@@ -464,15 +468,24 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
  endif
 
  ifdef VBOX_WITH_EFI
-  VBoxDD_DEFS           += VBOX_WITH_EFI
-  VBoxDD_LIBS           += $(PATH_STAGE_LIB)/EfiThunkBin$(VBOX_SUFF_LIB)
-  ifdef VBOX_WITH_ALT_EFITHUNK
-   VBoxDD_DEFS          += VBOX_WITH_ALT_EFITHUNK
+  ifndef VBOX_WITH_OVMF
+   VBoxDD_DEFS           += VBOX_WITH_EFI
+   VBoxDD_LIBS           += $(PATH_STAGE_LIB)/EfiThunkBin$(VBOX_SUFF_LIB)
+   ifdef VBOX_WITH_ALT_EFITHUNK
+    VBoxDD_DEFS          += VBOX_WITH_ALT_EFITHUNK
+   endif
+   VBoxDD_SOURCES        += EFI/DevEFI.cpp
+   EFI/DevEFI.cpp_INCS       += EFI/tools/include
+   EFI/DevEFI.cpp_INCS.x86   += EFI/tools/include/Ia32
+   EFI/DevEFI.cpp_INCS.amd64 += EFI/tools/include/X64
+  else
+   VBoxDD_DEFS           += VBOX_WITH_EFI
+   VBoxDD_SOURCES        += EFI/DevOVMF.cpp
+   EFI/DevOVMF.cpp_INCS       += EFI/tools/include
+   EFI/DevOVMF.cpp_INCS.x86   += EFI/tools/include/Ia32
+   EFI/DevOVMF.cpp_INCS.amd64 += EFI/tools/include/X64
+   build/VBoxDD.cpp_DEFS += VBOX_WITH_OVMF
   endif
-  VBoxDD_SOURCES        += EFI/DevEFI.cpp
-  EFI/DevEFI.cpp_INCS       += EFI/tools/include
-  EFI/DevEFI.cpp_INCS.x86   += EFI/tools/include/Ia32
-  EFI/DevEFI.cpp_INCS.amd64 += EFI/tools/include/X64
  endif
 
  if defined(VBOX_WITH_PCI_PASSTHROUGH_IMPL) && !defined(VBOX_WITH_EXTPACK_PUEL)
@@ -684,7 +697,7 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
   VBoxDD_LIBS           += \
  	$(LIB_DDU) \
  	$(PATH_STAGE_LIB)/VBoxDD2.lib \
- 	$(PATH_SDK_DXSDK_LIB)/dxguid.lib
+ 	$(PATH_SDK_$(VBOX_WINDDK)_LIB)/dxguid.lib
  else
   VBoxDD_LIBS           += \
  	$(VBoxDDU_1_STAGE_TARGET) \
@@ -870,8 +883,7 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
   ifdef VBOX_WITH_AHCI
   VBoxDDGC_DEFS         += VBOX_WITH_AHCI IN_AHCI_GC
   VBoxDDGC_SOURCES      += \
-  	Storage/DevAHCI.cpp \
-  	Storage/ATAController.cpp
+  	Storage/DevAHCI.cpp 
   endif
 
   ifdef VBOX_WITH_BUSLOGIC
@@ -936,7 +948,7 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
  VBoxDDR0_DEFS           = IN_RT_R0 VBOX_WITH_HGCM # - WTF is IN_RT_R0 doing here?
  VBoxDDR0_DEFS.win    += VBOX_WITH_WIN_PARPORT_SUP
  VBoxDDR0_INCS           = build
- VBoxDDR0_SDKS.win 	 = WINPSDK W2K3DDK
+ VBoxDDR0_SDKS.win 	 = ReorderCompilerIncs $(VBOX_WINPSDK) $(VBOX_WINDDK)
  VBoxDDR0_SOURCES        = \
  	build/VBoxDDR0.cpp \
  	Bus/DevPCI.cpp \
@@ -974,6 +986,12 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
   VBoxDDR0_SOURCES      += \
 	VirtIO/Virtio.cpp \
   	Network/DevVirtioNet.cpp
+ endif
+
+ ifdef VBOX_WITH_NETSHAPER
+  VBoxDDR0_DEFS         += VBOX_WITH_NETSHAPER
+  VBoxDDR0_SOURCES      += \
+ 	Network/DrvNetShaper.cpp
  endif
 
  ifdef VBOX_WITH_HGSMI
@@ -1017,8 +1035,7 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
  ifdef VBOX_WITH_AHCI
  VBoxDDR0_DEFS          += VBOX_WITH_AHCI IN_AHCI_R0
  VBoxDDR0_SOURCES       += \
- 	Storage/DevAHCI.cpp \
- 	Storage/ATAController.cpp
+ 	Storage/DevAHCI.cpp 
  endif
 
  ifdef VBOX_WITH_BUSLOGIC
@@ -1105,6 +1122,9 @@ if !defined(VBOX_ONLY_EXTPACKS)         # Goes on almost to the end of the file.
   tstIntNetR0_DEFS        = IN_INTNET_R0
   tstIntNetR0_SOURCES     = \
  	Network/testcase/tstIntNetR0.cpp
+  ifneq ($(KBUILD_TARGET),win)
+   Network/testcase/tstIntNetR0.cpp_CXXFLAGS = $(VBOX_GCC_Wno-array_bounds)
+  endif
  endif
 
 

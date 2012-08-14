@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -67,6 +67,7 @@ static const RTGETOPTDEF g_aStorageAttachOptions[] =
     { "--encodedlun",       'E', RTGETOPT_REQ_STRING },
     { "--username",         'U', RTGETOPT_REQ_STRING },
     { "--password",         'W', RTGETOPT_REQ_STRING },
+    { "--initiator",        'N', RTGETOPT_REQ_STRING },
     { "--intnet",           'I', RTGETOPT_REQ_NOTHING },
 };
 
@@ -99,6 +100,7 @@ int handleStorageAttach(HandlerArg *a)
     Bstr bstrLun;
     Bstr bstrUsername;
     Bstr bstrPassword;
+    Bstr bstrInitiator;
     bool fIntNet = false;
 
     RTGETOPTUNION ValueUnion;
@@ -269,6 +271,10 @@ int handleStorageAttach(HandlerArg *a)
                 bstrPassword = ValueUnion.psz;
                 break;
 
+            case 'N':   // --initiator
+                bstrInitiator = ValueUnion.psz;
+                break;
+
             case 'M':   // --type
             {
                 int vrc = parseDiskType(ValueUnion.psz, &mediumType);
@@ -388,11 +394,10 @@ int handleStorageAttach(HandlerArg *a)
                         || (deviceType == DeviceType_Floppy))
                     {
                         /* just unmount the floppy/dvd */
-                        CHECK_ERROR(machine, MountMedium(Bstr(pszCtl).raw(),
-                                                         port,
-                                                         device,
-                                                         NULL,
-                                                         fForceUnmount));
+                        CHECK_ERROR(machine, UnmountMedium(Bstr(pszCtl).raw(),
+                                                           port,
+                                                           device,
+                                                           fForceUnmount));
                     }
                 }
                 else if (devTypeRequested == DeviceType_DVD)
@@ -401,8 +406,8 @@ int handleStorageAttach(HandlerArg *a)
                      * Try to attach an empty DVD drive as a hotplug operation.
                      * Main will complain if the controller doesn't support hotplugging.
                      */
-                    CHECK_ERROR(machine, AttachDevice(Bstr(pszCtl).raw(), port, device,
-                                                      devTypeRequested, NULL));
+                    CHECK_ERROR(machine, AttachDeviceWithoutMedium(Bstr(pszCtl).raw(), port, device,
+                                                                   devTypeRequested));
                     deviceType = DeviceType_DVD; /* To avoid the error message below. */
                 }
 
@@ -439,8 +444,8 @@ int handleStorageAttach(HandlerArg *a)
 
                 /* attach a empty floppy/dvd drive after removing previous attachment */
                 machine->DetachDevice(Bstr(pszCtl).raw(), port, device);
-                CHECK_ERROR(machine, AttachDevice(Bstr(pszCtl).raw(), port, device,
-                                                  deviceType, NULL));
+                CHECK_ERROR(machine, AttachDeviceWithoutMedium(Bstr(pszCtl).raw(), port, device,
+                                                            deviceType));
             }
         } // end if (!RTStrICmp(pszMedium, "emptydrive"))
         else
@@ -596,13 +601,11 @@ int handleStorageAttach(HandlerArg *a)
                     Bstr("InitiatorSecret").detachTo(names.appendedRaw());
                     bstrPassword.detachTo(values.appendedRaw());
                 }
-
-                /// @todo add --initiator option - until that happens rely on the
-                // defaults of the iSCSI initiator code. Setting it to a constant
-                // value does more harm than good, as the initiator name is supposed
-                // to identify a particular initiator uniquely.
-        //        Bstr("InitiatorName").detachTo(names.appendedRaw());
-        //        Bstr("iqn.2008-04.com.sun.virtualbox.initiator").detachTo(values.appendedRaw());
+                if (!bstrPassword.isEmpty())
+                {
+                    Bstr("InitiatorName").detachTo(names.appendedRaw());
+                    bstrInitiator.detachTo(values.appendedRaw());
+                }
 
                 /// @todo add --targetName and --targetPassword options
 
@@ -645,7 +648,7 @@ int handleStorageAttach(HandlerArg *a)
             // set medium/parent medium UUID, if so desired
             if (pMedium2Mount && (fSetNewUuid || fSetNewParentUuid))
             {
-                CHECK_ERROR(pMedium2Mount, SetIDs(fSetNewUuid, bstrNewUuid.raw(),
+                CHECK_ERROR(pMedium2Mount, SetIds(fSetNewUuid, bstrNewUuid.raw(),
                                                   fSetNewParentUuid, bstrNewParentUuid.raw()));
                 if (FAILED(rc))
                     throw  Utf8Str("Failed to set the medium/parent medium UUID");
@@ -686,20 +689,18 @@ int handleStorageAttach(HandlerArg *a)
                                 if (deviceType != devTypeRequested)
                                 {
                                     machine->DetachDevice(Bstr(pszCtl).raw(), port, device);
-                                    rc = machine->AttachDevice(Bstr(pszCtl).raw(),
-                                                               port,
-                                                               device,
-                                                               devTypeRequested,    // DeviceType_DVD or DeviceType_Floppy
-                                                               NULL);
+                                    rc = machine->AttachDeviceWithoutMedium(Bstr(pszCtl).raw(),
+                                                                            port,
+                                                                            device,
+                                                                            devTypeRequested);    // DeviceType_DVD or DeviceType_Floppy
                                 }
                             }
                             else
                             {
-                                rc = machine->AttachDevice(Bstr(pszCtl).raw(),
-                                                           port,
-                                                           device,
-                                                           devTypeRequested,    // DeviceType_DVD or DeviceType_Floppy
-                                                           NULL);
+                                rc = machine->AttachDeviceWithoutMedium(Bstr(pszCtl).raw(),
+                                                                        port,
+                                                                        device,
+                                                                        devTypeRequested);    // DeviceType_DVD or DeviceType_Floppy
                             }
                         }
 
@@ -842,8 +843,8 @@ int handleStorageAttach(HandlerArg *a)
             if (!RTStrICmp(pszBandwidthGroup, "none"))
             {
                 /* Just remove the bandwidth gorup. */
-                CHECK_ERROR(machine, SetBandwidthGroupForDevice(Bstr(pszCtl).raw(),
-                                                                port, device, NULL));
+                CHECK_ERROR(machine, SetNoBandwidthGroupForDevice(Bstr(pszCtl).raw(),
+                                                                  port, device));
             }
             else
             {

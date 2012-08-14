@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,6 +24,7 @@
 
 #include "AdditionsFacilityImpl.h"
 #include "GuestCtrlImplPrivate.h"
+#include "GuestSessionImpl.h"
 #include "HGCM.h"
 #ifdef VBOX_WITH_GUEST_CONTROL
 # include <iprt/fs.h>
@@ -83,7 +84,8 @@ public:
     STDMETHOD(COMGETTER(AdditionsRunLevel)) (AdditionsRunLevelType_T *aRunLevel);
     STDMETHOD(COMGETTER(AdditionsVersion))(BSTR *a_pbstrAdditionsVersion);
     STDMETHOD(COMGETTER(AdditionsRevision))(ULONG *a_puAdditionsRevision);
-    STDMETHOD(COMGETTER(Facilities)) (ComSafeArrayOut(IAdditionsFacility*, aFacilities));
+    STDMETHOD(COMGETTER(Facilities)) (ComSafeArrayOut(IAdditionsFacility *, aFacilities));
+    STDMETHOD(COMGETTER(Sessions)) (ComSafeArrayOut(IGuestSession *, aSessions));
     STDMETHOD(COMGETTER(MemoryBalloonSize)) (ULONG *aMemoryBalloonSize);
     STDMETHOD(COMSETTER(MemoryBalloonSize)) (ULONG aMemoryBalloonSize);
     STDMETHOD(COMGETTER(StatisticsUpdateInterval)) (ULONG *aUpdateInterval);
@@ -130,6 +132,8 @@ public:
                                      ULONG *aMemTotal, ULONG *aMemFree, ULONG *aMemBalloon, ULONG *aMemShared, ULONG *aMemCache,
                                      ULONG *aPageTotal, ULONG *aMemAllocTotal, ULONG *aMemFreeTotal, ULONG *aMemBalloonTotal, ULONG *aMemSharedTotal);
     STDMETHOD(UpdateGuestAdditions)(IN_BSTR aSource, ULONG aFlags, IProgress **aProgress);
+    STDMETHOD(CreateSession)(IN_BSTR aUser, IN_BSTR aPassword, IN_BSTR aDomain, IN_BSTR aSessionName, IGuestSession **aGuestSession);
+    STDMETHOD(FindSession)(IN_BSTR aSessionName, ComSafeArrayOut(IGuestSession *, aSessions));
 
     // Public methods that are not in IDL (only called internally).
     void setAdditionsInfo(Bstr aInterfaceVersion, VBOXOSTYPE aOsType);
@@ -197,6 +201,18 @@ public:
     HRESULT taskUpdateGuestAdditions(GuestTask *aTask);
 #endif
     void enableVMMStatistics(BOOL aEnable) { mCollectVMMStats = aEnable; };
+
+public:
+    /** @name Public internal methods.
+     * @{ */
+    int         dispatchToSession(uint32_t uContextID, uint32_t uFunction, void *pvData, size_t cbData);
+    uint32_t    getAdditionsVersion(void) { return mData.mAdditionsVersionFull; }
+    Console    *getConsole(void) { return mParent; }
+    int         sessionClose(ComObjPtr<GuestSession> pSession);
+    int         sessionCreate(const Utf8Str &strUser, const Utf8Str &aPassword, const Utf8Str &aDomain,
+                              const Utf8Str &aSessionName, ComObjPtr<GuestSession> &pGuestSession);
+    inline bool sessionExists(uint32_t uSessionID);
+    /** @}  */
 
 private:
 
@@ -293,6 +309,9 @@ private:
     typedef std::map< AdditionsFacilityType_T, ComObjPtr<AdditionsFacility> >::iterator FacilityMapIter;
     typedef std::map< AdditionsFacilityType_T, ComObjPtr<AdditionsFacility> >::const_iterator FacilityMapIterConst;
 
+    /** Map for keeping the guest sessions. The primary key marks the guest session ID. */
+    typedef std::map <uint32_t, ComObjPtr<GuestSession> > GuestSessions;
+
     struct Data
     {
         Data() : mAdditionsRunLevel(AdditionsRunLevelType_None)
@@ -307,6 +326,8 @@ private:
         uint32_t                mAdditionsRevision;
         uint32_t                mAdditionsFeatures;
         Bstr                    mInterfaceVersion;
+        GuestSessions           mGuestSessions;
+        uint32_t                mNextSessionID;
     };
 
     ULONG mMemoryBalloonSize;
@@ -346,4 +367,4 @@ private:
 #define GUEST_MAGIC 0xCEED2006u
 
 #endif // ____H_GUESTIMPL
-/* vi: set tabstop=4 shiftwidth=4 expandtab: */
+

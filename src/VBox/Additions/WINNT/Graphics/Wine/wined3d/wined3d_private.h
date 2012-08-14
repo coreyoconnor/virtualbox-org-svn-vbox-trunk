@@ -1282,7 +1282,11 @@ void context_attach_depth_stencil_fbo(struct wined3d_context *context,
 void context_attach_surface_fbo(const struct wined3d_context *context,
         GLenum fbo_target, DWORD idx, IWineD3DSurfaceImpl *surface) DECLSPEC_HIDDEN;
 struct wined3d_context *context_create(IWineD3DSwapChainImpl *swapchain, IWineD3DSurfaceImpl *target,
-        const struct wined3d_format_desc *ds_format_desc) DECLSPEC_HIDDEN;
+        const struct wined3d_format_desc *ds_format_desc
+#ifdef VBOX_WITH_WDDM
+                , struct VBOXUHGSMI *pHgsmi
+#endif
+        ) DECLSPEC_HIDDEN;
 struct IWineD3DDeviceImpl *context_get_device(const struct wined3d_context *context); DECLSPEC_HIDDEN;
 #ifdef VBOX_WITH_WDDM
 struct wined3d_context *context_find_create(IWineD3DDeviceImpl *device, IWineD3DSwapChainImpl *swapchain, IWineD3DSurfaceImpl *target,
@@ -1546,8 +1550,10 @@ struct wined3d_adapter
     int                     nCfgs;
     WineD3D_PixelFormat     *cfgs;
     BOOL                    brokenStencil; /* Set on cards which only offer mixed depth+stencil */
+#ifndef VBOX_WITH_WDDM
     unsigned int            TextureRam; /* Amount of texture memory both video ram + AGP/TurboCache/HyperMemory/.. */
     unsigned int            UsedTextureRam;
+#endif
     LUID luid;
 
     const struct fragment_pipeline *fragment_pipe;
@@ -1557,7 +1563,9 @@ struct wined3d_adapter
 
 BOOL initPixelFormats(struct wined3d_gl_info *gl_info, enum wined3d_pci_vendor vendor) DECLSPEC_HIDDEN;
 BOOL initPixelFormatsNoGL(struct wined3d_gl_info *gl_info) DECLSPEC_HIDDEN;
+#ifndef VBOX_WITH_WDDM
 extern long WineD3DAdapterChangeGLRam(IWineD3DDeviceImpl *D3DDevice, long glram) DECLSPEC_HIDDEN;
+#endif
 extern void add_gl_compat_wrappers(struct wined3d_gl_info *gl_info) DECLSPEC_HIDDEN;
 
 /*****************************************************************************
@@ -1795,6 +1803,15 @@ struct IWineD3DDeviceImpl
     /* Context management */
     struct wined3d_context **contexts;
     UINT                    numContexts;
+
+#ifdef VBOX_WITH_WDDM
+    struct VBOXUHGSMI *pHgsmi;
+#endif
+
+#ifdef VBOX_WINE_WITH_SHADER_CACHE
+    VBOXEXT_HASHCACHE vshaderCache;
+    VBOXEXT_HASHCACHE pshaderCache;
+#endif
 
     /* High level patch management */
 #define PATCHMAP_SIZE 43
@@ -2924,6 +2941,11 @@ typedef struct IWineD3DBaseShaderClass
     IWineD3DDevice *device;
     struct list     shader_list_entry;
 
+#ifdef VBOX_WINE_WITH_SHADER_CACHE
+    VBOXEXT_HASHCACHE_ENTRY CacheEntry;
+    uint32_t u32CacheDataInited;
+    uint32_t u32Hash;
+#endif
 } IWineD3DBaseShaderClass;
 
 typedef struct IWineD3DBaseShaderImpl {
@@ -3089,6 +3111,13 @@ void pixelshader_update_samplers(struct shader_reg_maps *reg_maps,
         IWineD3DBaseTexture * const *textures) DECLSPEC_HIDDEN;
 void find_ps_compile_args(IWineD3DPixelShaderImpl *shader, IWineD3DStateBlockImpl *stateblock,
         struct ps_compile_args *args) DECLSPEC_HIDDEN;
+
+#ifdef VBOX_WINE_WITH_SHADER_CACHE
+IWineD3DVertexShaderImpl * vertexshader_check_cached(IWineD3DDeviceImpl *device, IWineD3DVertexShaderImpl *object) DECLSPEC_HIDDEN;
+IWineD3DPixelShaderImpl * pixelshader_check_cached(IWineD3DDeviceImpl *device, IWineD3DPixelShaderImpl *object) DECLSPEC_HIDDEN;
+void shader_chaches_init(IWineD3DDeviceImpl *device) DECLSPEC_HIDDEN;
+void shader_chaches_term(IWineD3DDeviceImpl *device) DECLSPEC_HIDDEN;
+#endif
 
 /* sRGB correction constants */
 static const float srgb_cmp = 0.0031308f;

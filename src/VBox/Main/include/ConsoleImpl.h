@@ -113,7 +113,7 @@ public:
     void FinalRelease();
 
     // public initializers/uninitializers for internal purposes only
-    HRESULT init(IMachine *aMachine, IInternalMachineControl *aControl);
+    HRESULT init(IMachine *aMachine, IInternalMachineControl *aControl, LockType_T aLockType);
     void uninit();
 
     // IConsole properties
@@ -129,7 +129,7 @@ public:
     STDMETHOD(COMGETTER(VRDEServerInfo))(IVRDEServerInfo **aVRDEServerInfo);
     STDMETHOD(COMGETTER(SharedFolders))(ComSafeArrayOut(ISharedFolder *, aSharedFolders));
     STDMETHOD(COMGETTER(EventSource)) (IEventSource ** aEventSource);
-    STDMETHOD(COMGETTER(AttachedPciDevices))(ComSafeArrayOut(IPciDeviceAttachment *, aAttachments));
+    STDMETHOD(COMGETTER(AttachedPCIDevices))(ComSafeArrayOut(IPCIDeviceAttachment *, aAttachments));
     STDMETHOD(COMGETTER(UseHostClipboard))(BOOL *aUseHostClipboard);
     STDMETHOD(COMSETTER(UseHostClipboard))(BOOL aUseHostClipboard);
 
@@ -197,6 +197,7 @@ public:
     HRESULT onCPUChange(ULONG aCPU, BOOL aRemove);
     HRESULT onCPUExecutionCapChange(ULONG aExecutionCap);
     HRESULT onClipboardModeChange(ClipboardMode_T aClipboardMode);
+    HRESULT onDragAndDropModeChange(DragAndDropMode_T aDragAndDropMode);
     HRESULT onVRDEServerChange(BOOL aRestart);
     HRESULT onUSBControllerChange();
     HRESULT onSharedFolderChange(BOOL aGlobal);
@@ -573,7 +574,7 @@ private:
                                                    IMediumAttachment *aMediumAtt,
                                                    bool fForce);
 
-    HRESULT attachRawPciDevices(PVM pVM, BusAssignmentManager *BusMgr, PCFGMNODE pDevices);
+    HRESULT attachRawPCIDevices(PVM pVM, BusAssignmentManager *BusMgr, PCFGMNODE pDevices);
     void attachStatusDriver(PCFGMNODE pCtlInst, PPDMLED *papLeds,
                             uint64_t uFirst, uint64_t uLast,
                             Console::MediumAttachmentMap *pmapMediumAttachments,
@@ -601,6 +602,7 @@ private:
                                                      INetworkAdapter *aNetworkAdapter);
 
     void changeClipboardMode(ClipboardMode_T aClipboardMode);
+    void changeDragAndDropMode(DragAndDropMode_T aDragAndDropMode);
 
 #ifdef VBOX_WITH_USB
     HRESULT attachUSBDevice(IUSBDevice *aHostDevice, ULONG aMaskedIfs);

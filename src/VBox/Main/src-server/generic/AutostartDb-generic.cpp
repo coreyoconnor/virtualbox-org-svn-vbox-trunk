@@ -26,48 +26,7 @@
 
 #include "AutostartDb.h"
 
-/** @todo: Make configurable through kmk/installer. */
-#define AUTOSTART_DATABASE "/etc/vbox/autostart.d"
-
 #if defined(RT_OS_LINUX)
-/**
- * Return the username of the current process.
- *
- * @returns Pointer to the string containing the username of
- *          NULL in case of an error. Free with RTMemFree().
- */
-static int autostartGetProcessUser(char **ppszUser)
-{
-    int rc = VINF_SUCCESS;
-    size_t cbUser = 128;
-    char *pszUser = (char *)RTMemAllocZ(cbUser);
-
-    if (pszUser)
-    {
-        rc = RTProcQueryUsername(RTProcSelf(), pszUser, cbUser, &cbUser);
-        if (rc == VERR_BUFFER_OVERFLOW)
-        {
-            char *pszTmp = (char *)RTMemRealloc(pszUser, cbUser);
-            if (pszTmp)
-            {
-                pszUser = pszTmp;
-                rc = RTProcQueryUsername(RTProcSelf(), pszUser, cbUser, &cbUser);
-                Assert(rc != VERR_BUFFER_OVERFLOW);
-            }
-        }
-
-        if (RT_FAILURE(rc))
-        {
-            RTMemFree(pszUser);
-            pszUser = NULL;
-        }
-        else
-            *ppszUser = pszUser;
-    }
-
-    return rc;
-}
-
 /**
  * Modifies the autostart database.
  *
@@ -75,24 +34,31 @@ static int autostartGetProcessUser(char **ppszUser)
  * @param   fAutostart    Flag whether the autostart or autostop database is modified.
  * @param   fAddVM        Flag whether a VM is added or removed from the database.
  */
-static int autostartModifyDb(bool fAutostart, bool fAddVM)
+int AutostartDb::autostartModifyDb(bool fAutostart, bool fAddVM)
 {
     int rc = VINF_SUCCESS;
     char *pszUser = NULL;
 
-    rc = autostartGetProcessUser(&pszUser);
-    if (   RT_SUCCESS(rc)
-        && pszUser)
+    /* Check if the path is set. */
+    if (!m_pszAutostartDbPath)
+        return VERR_PATH_NOT_FOUND;
+
+    rc = RTProcQueryUsernameA(RTProcSelf(), &pszUser);
+    if (RT_SUCCESS(rc))
     {
         char *pszFile;
         uint64_t fOpen = RTFILE_O_DENY_ALL | RTFILE_O_READWRITE;
         RTFILE hAutostartFile;
 
+        AssertPtr(pszUser);
+
         if (fAddVM)
             fOpen |= RTFILE_O_OPEN_CREATE;
+        else
+            fOpen |= RTFILE_O_OPEN;
 
         rc = RTStrAPrintf(&pszFile, "%s/%s.%s",
-                          AUTOSTART_DATABASE, pszUser, fAutostart ? "start" : "stop");
+                          m_pszAutostartDbPath, pszUser, fAutostart ? "start" : "stop");
         if (RT_SUCCESS(rc))
         {
             rc = RTFileOpen(&hAutostartFile, pszFile, fOpen);
@@ -161,9 +127,9 @@ static int autostartModifyDb(bool fAutostart, bool fAddVM)
             }
             RTStrFree(pszFile);
         }
+
+        RTStrFree(pszUser);
     }
-    else if (pszUser)
-        rc = VERR_NOT_SUPPORTED;
 
     return rc;
 }
@@ -175,6 +141,7 @@ AutostartDb::AutostartDb()
 #ifdef RT_OS_LINUX
     int rc = RTCritSectInit(&this->CritSect);
     NOREF(rc);
+    m_pszAutostartDbPath = NULL;
 #endif
 }
 
@@ -182,6 +149,33 @@ AutostartDb::~AutostartDb()
 {
 #ifdef RT_OS_LINUX
     RTCritSectDelete(&this->CritSect);
+    if (m_pszAutostartDbPath)
+        RTStrFree(m_pszAutostartDbPath);
+#endif
+}
+
+int AutostartDb::setAutostartDbPath(const char *pszAutostartDbPathNew)
+{
+#if defined(RT_OS_LINUX)
+    char *pszAutostartDbPathTmp = NULL;
+
+    if (pszAutostartDbPathNew)
+    {
+        pszAutostartDbPathTmp = RTStrDup(pszAutostartDbPathNew);
+        if (!pszAutostartDbPathTmp)
+            return VERR_NO_MEMORY;
+    }
+
+    RTCritSectEnter(&this->CritSect);
+    if (m_pszAutostartDbPath)
+        RTStrFree(m_pszAutostartDbPath);
+
+    m_pszAutostartDbPath = pszAutostartDbPathTmp;
+    RTCritSectLeave(&this->CritSect);
+    return VINF_SUCCESS;
+#else
+    NOREF(pszAutostartDbPathNew);
+    return VERR_NOT_SUPPORTED;
 #endif
 }
 
@@ -195,7 +189,7 @@ int AutostartDb::addAutostartVM(const char *pszVMId)
     RTCritSectEnter(&this->CritSect);
     rc = autostartModifyDb(true /* fAutostart */, true /* fAddVM */);
     RTCritSectLeave(&this->CritSect);
-#elif defined(RT_OS_DARWIN)
+#elif defined(RT_OS_DARWIN) || defined(RT_OS_SOLARIS)
     NOREF(pszVMId); /* Not needed */
     rc = VINF_SUCCESS;
 #else
@@ -215,7 +209,7 @@ int AutostartDb::removeAutostartVM(const char *pszVMId)
     RTCritSectEnter(&this->CritSect);
     rc = autostartModifyDb(true /* fAutostart */, false /* fAddVM */);
     RTCritSectLeave(&this->CritSect);
-#elif defined(RT_OS_DARWIN)
+#elif defined(RT_OS_DARWIN) || defined(RT_OS_SOLARIS)
     NOREF(pszVMId); /* Not needed */
     rc = VINF_SUCCESS;
 #else

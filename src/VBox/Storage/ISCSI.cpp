@@ -1565,9 +1565,55 @@ restart:
                         rc = iscsiTransportOpen(pImage);
                         goto restart;
                     case ISCSI_LOGIN_STATUS_CLASS_INITIATOR_ERROR:
+                    {
+                        const char *pszDetail = NULL;
+
+                        switch ((RT_N2H_U32(aResBHS[9]) >> 16) & 0xff)
+                        {
+                            case 0x00:
+                                pszDetail = "Miscelleanous iSCSI intiaitor error";
+                                break;
+                            case 0x01:
+                                pszDetail = "Authentication failure";
+                                break;
+                            case 0x02:
+                                pszDetail = "Authorization failure";
+                                break;
+                            case 0x03:
+                                pszDetail = "Not found";
+                                break;
+                            case 0x04:
+                                pszDetail = "Target removed";
+                                break;
+                            case 0x05:
+                                pszDetail = "Unsupported version";
+                                break;
+                            case 0x06:
+                                pszDetail = "Too many connections";
+                                break;
+                            case 0x07:
+                                pszDetail = "Missing parameter";
+                                break;
+                            case 0x08:
+                                pszDetail = "Can't include in session";
+                                break;
+                            case 0x09:
+                                pszDetail = "Session type not supported";
+                                break;
+                            case 0x0a:
+                                pszDetail = "Session does not exist";
+                                break;
+                            case 0x0b:
+                                pszDetail = "Invalid request type during login";
+                                break;
+                            default:
+                                pszDetail = "Unknown status detail";
+                        }
+                        LogRel(("iSCSI: login to target failed with: %s\n", pszDetail));
                         iscsiTransportClose(pImage);
                         rc = VERR_IO_GEN_FAILURE;
                         goto out;
+                    }
                     case ISCSI_LOGIN_STATUS_CLASS_TARGET_ERROR:
                         iscsiTransportClose(pImage);
                         rc = VINF_EOF;
@@ -3770,7 +3816,18 @@ static int iscsiOpenImage(PISCSIIMAGE pImage, unsigned uOpenFlags)
 
     /* Validate configuration, detect unknown keys. */
     if (!VDCFGAreKeysValid(pImage->pIfConfig,
-                           "TargetName\0InitiatorName\0LUN\0TargetAddress\0InitiatorUsername\0InitiatorSecret\0TargetUsername\0TargetSecret\0WriteSplit\0Timeout\0HostIPStack\0"))
+                           "TargetName\0"
+                           "InitiatorName\0"
+                           "LUN\0"
+                           "TargetAddress\0"
+                           "InitiatorUsername\0"
+                           "InitiatorSecret\0"
+                           "InitiatorSecretEncrypted\0"
+                           "TargetUsername\0"
+                           "TargetSecret\0"
+                           "WriteSplit\0"
+                           "Timeout\0"
+                           "HostIPStack\0"))
     {
         rc = vdIfError(pImage->pIfError, VERR_VD_ISCSI_UNKNOWN_CFG_VALUES, RT_SRC_POS, N_("iSCSI: configuration error: unknown configuration keys present"));
         goto out;
@@ -3862,6 +3919,22 @@ static int iscsiOpenImage(PISCSIIMAGE pImage, unsigned uOpenFlags)
     {
         rc = vdIfError(pImage->pIfError, rc, RT_SRC_POS, N_("iSCSI: configuration error: failed to read InitiatorSecret as byte string"));
         goto out;
+    }
+    void *pvInitiatorSecretEncrypted;
+    size_t cbInitiatorSecretEncrypted;
+    rc = VDCFGQueryBytesAlloc(pImage->pIfConfig,
+                              "InitiatorSecretEncrypted",
+                              &pvInitiatorSecretEncrypted,
+                              &cbInitiatorSecretEncrypted);
+    if (RT_SUCCESS(rc))
+    {
+        RTMemFree(pvInitiatorSecretEncrypted);
+        if (!pImage->pbInitiatorSecret)
+        {
+            /* we have an encrypted initiator secret but not an unencrypted one */
+            rc = vdIfError(pImage->pIfError, VERR_VD_ISCSI_SECRET_ENCRYPTED, RT_SRC_POS, N_("iSCSI: initiator secret not decrypted"));
+            goto out;
+        }
     }
     pImage->pszTargetUsername = NULL;
     rc = VDCFGQueryStringAlloc(pImage->pIfConfig,

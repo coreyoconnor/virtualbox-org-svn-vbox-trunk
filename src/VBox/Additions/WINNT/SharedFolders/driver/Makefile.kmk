@@ -24,10 +24,10 @@ include $(KBUILD_PATH)/subheader.kmk
 SYSMODS += VBoxSF
 VBoxSF_TEMPLATE    = VBOXGUESTR0
 VBoxSF_DEFS        = LOG_TO_BACKDOOR VBOX_WITH_HGCM IN_RING0
-#VBoxSF_DEFS       += LOG_ENABLED
+VBoxSF_DEFS       += LOG_ENABLED
 
-VBoxSF_SDKS.x86    = WINDDKW2K
-VBoxSF_SDKS.amd64  = WINDDKWLH
+VBoxSF_SDKS.x86    = ReorderCompilerIncs $(VBOX_WINDDK_GST_W2K3)
+VBoxSF_SDKS.amd64  = ReorderCompilerIncs $(VBOX_WINDDK_GST_WLH)
 
 VBoxSF_INCS        = \
 	../../../common/VBoxGuestLib
@@ -42,24 +42,27 @@ VBoxSF_SOURCES     =  \
 	path.c \
 	vbsfhlp.c \
  	VBoxSF.rc
+VBoxSF_SOURCES.x86 = \
+	Win2kWorkarounds.c \
+	Win2kWorkaroundsA.asm
 
 VBoxSF_LIBS.x86  = \
-	$(PATH_SDK_WINDDKW2K_LIB.x86)/fre/rxce.lib \
-	$(PATH_SDK_WINDDKW2K_LIB.x86)/fre/rdbsslib.lib \
-	$(PATH_SDK_WINDDKW2K_LIB.x86)/fre/copysup.lib \
-	$(PATH_SDK_WINDDKW2K_LIB.x86)/ntoskrnl.lib \
-	$(PATH_SDK_WINDDKW2K_LIB.x86)/hal.lib \
-	$(PATH_SDK_WINDDKW2K_LIB.x86)/ksecdd.lib \
-	$(PATH_SDK_WINDDKW2K_LIB.x86)/BufferOverflowK.lib
+	$(PATH_SDK_$(VBOX_WINDDK_GST_W2K3)_LIB.x86)/rxce.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_W2K3)_LIB.x86)/rdbsslib.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_W2K3)_LIB.x86)/copysup.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_W2K3)_LIB.x86)/ntoskrnl.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_W2K3)_LIB.x86)/hal.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_W2K3)_LIB.x86)/ksecdd.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_W2K3)_LIB.x86)/BufferOverflowK.lib
 
 VBoxSF_LIBS.amd64  = \
-	$(PATH_SDK_WINDDKWLH_LIB.amd64)/rxce.lib \
-	$(PATH_SDK_WINDDKWLH_LIB.amd64)/rdbsslib.lib \
-	$(PATH_SDK_WINDDKWLH_LIB.amd64)/copysup.lib \
-	$(PATH_SDK_WINDDKWLH_LIB.amd64)/ntoskrnl.lib \
-	$(PATH_SDK_WINDDKWLH_LIB.amd64)/hal.lib \
-	$(PATH_SDK_WINDDKWLH_LIB.amd64)/ksecdd.lib \
-	$(PATH_SDK_WINDDKWLH_LIB.amd64)/BufferOverflowK.lib
+	$(PATH_SDK_$(VBOX_WINDDK_GST_WLH)_LIB.amd64)/rxce.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_WLH)_LIB.amd64)/rdbsslib.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_WLH)_LIB.amd64)/copysup.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_WLH)_LIB.amd64)/ntoskrnl.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_WLH)_LIB.amd64)/hal.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_WLH)_LIB.amd64)/ksecdd.lib \
+	$(PATH_SDK_$(VBOX_WINDDK_GST_WLH)_LIB.amd64)/BufferOverflowK.lib
 
 VBoxSF_LIBS = \
 	$(VBOX_LIB_VBGL_R0) \

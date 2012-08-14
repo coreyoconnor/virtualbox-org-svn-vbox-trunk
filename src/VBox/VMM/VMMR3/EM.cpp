@@ -364,16 +364,16 @@ VMMR3DECL(int) EMR3Init(PVM pVM)
         EM_REG_COUNTER_USED(&pStats->StatHlt,                    "/EM/CPU%d/R3/PrivInst/Hlt",                "Number of hlt instructions not handled in GC because of PATM.");
         EM_REG_COUNTER_USED(&pStats->StatInvlpg,                 "/EM/CPU%d/R3/PrivInst/Invlpg",             "Number of invlpg instructions.");
         EM_REG_COUNTER_USED(&pStats->StatMisc,                   "/EM/CPU%d/R3/PrivInst/Misc",               "Number of misc. instructions.");
-        EM_REG_COUNTER_USED(&pStats->StatMovWriteCR[0],          "/EM/CPU%d/R3/PrivInst/Mov CR0, X",         "Number of mov CR0 read instructions.");
-        EM_REG_COUNTER_USED(&pStats->StatMovWriteCR[1],          "/EM/CPU%d/R3/PrivInst/Mov CR1, X",         "Number of mov CR1 read instructions.");
-        EM_REG_COUNTER_USED(&pStats->StatMovWriteCR[2],          "/EM/CPU%d/R3/PrivInst/Mov CR2, X",         "Number of mov CR2 read instructions.");
-        EM_REG_COUNTER_USED(&pStats->StatMovWriteCR[3],          "/EM/CPU%d/R3/PrivInst/Mov CR3, X",         "Number of mov CR3 read instructions.");
-        EM_REG_COUNTER_USED(&pStats->StatMovWriteCR[4],          "/EM/CPU%d/R3/PrivInst/Mov CR4, X",         "Number of mov CR4 read instructions.");
-        EM_REG_COUNTER_USED(&pStats->StatMovReadCR[0],           "/EM/CPU%d/R3/PrivInst/Mov X, CR0",         "Number of mov CR0 write instructions.");
-        EM_REG_COUNTER_USED(&pStats->StatMovReadCR[1],           "/EM/CPU%d/R3/PrivInst/Mov X, CR1",         "Number of mov CR1 write instructions.");
-        EM_REG_COUNTER_USED(&pStats->StatMovReadCR[2],           "/EM/CPU%d/R3/PrivInst/Mov X, CR2",         "Number of mov CR2 write instructions.");
-        EM_REG_COUNTER_USED(&pStats->StatMovReadCR[3],           "/EM/CPU%d/R3/PrivInst/Mov X, CR3",         "Number of mov CR3 write instructions.");
-        EM_REG_COUNTER_USED(&pStats->StatMovReadCR[4],           "/EM/CPU%d/R3/PrivInst/Mov X, CR4",         "Number of mov CR4 write instructions.");
+        EM_REG_COUNTER_USED(&pStats->StatMovWriteCR[0],          "/EM/CPU%d/R3/PrivInst/Mov CR0, X",         "Number of mov CR0 write instructions.");
+        EM_REG_COUNTER_USED(&pStats->StatMovWriteCR[1],          "/EM/CPU%d/R3/PrivInst/Mov CR1, X",         "Number of mov CR1 write instructions.");
+        EM_REG_COUNTER_USED(&pStats->StatMovWriteCR[2],          "/EM/CPU%d/R3/PrivInst/Mov CR2, X",         "Number of mov CR2 write instructions.");
+        EM_REG_COUNTER_USED(&pStats->StatMovWriteCR[3],          "/EM/CPU%d/R3/PrivInst/Mov CR3, X",         "Number of mov CR3 write instructions.");
+        EM_REG_COUNTER_USED(&pStats->StatMovWriteCR[4],          "/EM/CPU%d/R3/PrivInst/Mov CR4, X",         "Number of mov CR4 write instructions.");
+        EM_REG_COUNTER_USED(&pStats->StatMovReadCR[0],           "/EM/CPU%d/R3/PrivInst/Mov X, CR0",         "Number of mov CR0 read instructions.");
+        EM_REG_COUNTER_USED(&pStats->StatMovReadCR[1],           "/EM/CPU%d/R3/PrivInst/Mov X, CR1",         "Number of mov CR1 read instructions.");
+        EM_REG_COUNTER_USED(&pStats->StatMovReadCR[2],           "/EM/CPU%d/R3/PrivInst/Mov X, CR2",         "Number of mov CR2 read instructions.");
+        EM_REG_COUNTER_USED(&pStats->StatMovReadCR[3],           "/EM/CPU%d/R3/PrivInst/Mov X, CR3",         "Number of mov CR3 read instructions.");
+        EM_REG_COUNTER_USED(&pStats->StatMovReadCR[4],           "/EM/CPU%d/R3/PrivInst/Mov X, CR4",         "Number of mov CR4 read instructions.");
         EM_REG_COUNTER_USED(&pStats->StatMovDRx,                 "/EM/CPU%d/R3/PrivInst/MovDRx",             "Number of mov DRx instructions.");
         EM_REG_COUNTER_USED(&pStats->StatIret,                   "/EM/CPU%d/R3/PrivInst/Iret",               "Number of iret instructions.");
         EM_REG_COUNTER_USED(&pStats->StatMovLgdt,                "/EM/CPU%d/R3/PrivInst/Lgdt",               "Number of lgdt instructions.");
@@ -1310,6 +1310,40 @@ EMSTATE emR3Reschedule(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx)
             Log2(("raw r0 mode refused: IOPL %d\n", EFlags.Bits.u2IOPL));
             return EMSTATE_REM;
         }
+    }
+
+    /*
+     * Stale hidden selectors means raw-mode is unsafe (being very careful).
+     */
+    if (pCtx->cs.fFlags & CPUMSELREG_FLAGS_STALE)
+    {
+        Log2(("raw mode refused: stale CS\n"));
+        return EMSTATE_REM;
+    }
+    if (pCtx->ss.fFlags & CPUMSELREG_FLAGS_STALE)
+    {
+        Log2(("raw mode refused: stale SS\n"));
+        return EMSTATE_REM;
+    }
+    if (pCtx->ds.fFlags & CPUMSELREG_FLAGS_STALE)
+    {
+        Log2(("raw mode refused: stale DS\n"));
+        return EMSTATE_REM;
+    }
+    if (pCtx->es.fFlags & CPUMSELREG_FLAGS_STALE)
+    {
+        Log2(("raw mode refused: stale ES\n"));
+        return EMSTATE_REM;
+    }
+    if (pCtx->fs.fFlags & CPUMSELREG_FLAGS_STALE)
+    {
+        Log2(("raw mode refused: stale FS\n"));
+        return EMSTATE_REM;
+    }
+    if (pCtx->gs.fFlags & CPUMSELREG_FLAGS_STALE)
+    {
+        Log2(("raw mode refused: stale GS\n"));
+        return EMSTATE_REM;
     }
 
     /*Assert(PGMPhysIsA20Enabled(pVCpu));*/

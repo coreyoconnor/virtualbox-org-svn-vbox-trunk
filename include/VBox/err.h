@@ -591,6 +591,9 @@
 #define VERR_CPUM_RAISE_GP_0                    (-1750)
 /** Incompatible CPUM configuration. */
 #define VERR_CPUM_INCOMPATIBLE_CONFIG           (-1751)
+/** CPUMR3DisasmInstrCPU unexpectedly failed to determin the hidden
+ * parts of the CS register. */
+#define VERR_CPUM_HIDDEN_CS_LOAD_ERROR          (-1752)
 /** @} */
 
 
@@ -958,11 +961,11 @@
 /** Bad TRPM_TRAP_IN_OP. */
 #define VERR_TRPM_BAD_TRAP_IN_OP            (-2406)
 /** Internal processing error \#1 in TRPM. */
-#define VERR_TRPM_IPE_1                     (-2507)
+#define VERR_TRPM_IPE_1                     (-2407)
 /** Internal processing error \#2 in TRPM. */
-#define VERR_TRPM_IPE_2                     (-2508)
+#define VERR_TRPM_IPE_2                     (-2408)
 /** Internal processing error \#3 in TRPM. */
-#define VERR_TRPM_IPE_3                     (-2509)
+#define VERR_TRPM_IPE_3                     (-2409)
 /** @} */
 
 
@@ -989,6 +992,11 @@
 #define VERR_SELM_INVALID_LDT               (-2505)
 /** The guest LDT selector is out of bounds. */
 #define VERR_SELM_LDT_OUT_OF_BOUNDS         (-2506)
+/** Unknown error while reading the guest GDT during shadow table updating. */
+#define VERR_SELM_GDT_READ_ERROR            (-2507)
+/** The guest GDT so full that we cannot find free space for our own
+ * selectors. */
+#define VERR_SELM_GDT_TOO_FULL              (-2508)
 /** @} */
 
 
@@ -1507,6 +1515,8 @@
 #define VERR_VD_ISCSI_INVALID_STATE                 (-3253)
 /** iSCSI: Invalid device type (not a disk). */
 #define VERR_VD_ISCSI_INVALID_TYPE                  (-3254)
+/** iSCSI: Initiator secret not decrypted */
+#define VERR_VD_ISCSI_SECRET_ENCRYPTED              (-3255)
 /** VHD: Invalid image file header. */
 #define VERR_VD_VHD_INVALID_HEADER                  (-3260)
 /** Parallels HDD: Invalid image file header. */

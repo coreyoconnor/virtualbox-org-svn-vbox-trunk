@@ -1179,6 +1179,17 @@ HRESULT Medium::init(VirtualBox *aVirtualBox,
         m->mapProperties[name] = value;
     }
 
+    /* try to decrypt an optional iSCSI initiator secret */
+    settings::StringsMap::const_iterator itCph = data.properties.find("InitiatorSecretEncrypted");
+    if (   itCph != data.properties.end()
+        && !itCph->second.isEmpty())
+    {
+        Utf8Str strPlaintext;
+        int vrc = m->pVirtualBox->decryptSetting(&strPlaintext, itCph->second);
+        if (RT_SUCCESS(vrc))
+            m->mapProperties["InitiatorSecret"] = strPlaintext;
+    }
+
     Utf8Str strFull;
     if (m->formatObj->getCapabilities() & MediumFormatCapabilities_File)
     {
@@ -1935,7 +1946,7 @@ STDMETHODIMP Medium::COMGETTER(MachineIds)(ComSafeArrayOut(BSTR,aMachineIds))
     return S_OK;
 }
 
-STDMETHODIMP Medium::SetIDs(BOOL aSetImageId,
+STDMETHODIMP Medium::SetIds(BOOL aSetImageId,
                             IN_BSTR aImageId,
                             BOOL aSetParentId,
                             IN_BSTR aParentId)
@@ -2631,6 +2642,17 @@ STDMETHODIMP Medium::MergeTo(IMedium *aTarget, IProgress **aProgress)
         pProgress.queryInterfaceTo(aProgress);
 
     return rc;
+}
+
+STDMETHODIMP Medium::CloneToBase(IMedium   *aTarget,
+                                 ULONG     aVariant,
+                                 IProgress **aProgress)
+{
+     int rc = S_OK;
+     CheckComArgNotNull(aTarget);
+     CheckComArgOutPointerValid(aProgress);
+     rc =  CloneTo(aTarget, aVariant, NULL, aProgress);
+     return rc;
 }
 
 STDMETHODIMP Medium::CloneTo(IMedium *aTarget,
@@ -3753,6 +3775,20 @@ HRESULT Medium::saveSettings(settings::Medium &data,
 
     /* optional properties */
     data.properties.clear();
+
+    /* handle iSCSI initiator secrets transparently */
+    bool fHaveInitiatorSecretEncrypted = false;
+    Utf8Str strCiphertext;
+    settings::StringsMap::const_iterator itPln = m->mapProperties.find("InitiatorSecret");
+    if (   itPln != m->mapProperties.end()
+        && !itPln->second.isEmpty())
+    {
+        /* Encrypt the plain secret. If that does not work (i.e. no or wrong settings key
+         * specified), just use the encrypted secret (if there is any). */
+        int rc = m->pVirtualBox->encryptSetting(itPln->second, &strCiphertext);
+        if (RT_SUCCESS(rc))
+            fHaveInitiatorSecretEncrypted = true;
+    }
     for (settings::StringsMap::const_iterator it = m->mapProperties.begin();
          it != m->mapProperties.end();
          ++it)
@@ -3762,9 +3798,14 @@ HRESULT Medium::saveSettings(settings::Medium &data,
         {
             const Utf8Str &name = it->first;
             const Utf8Str &value = it->second;
-            data.properties[name] = value;
+            /* do NOT store the plain InitiatorSecret */
+            if (   !fHaveInitiatorSecretEncrypted
+                || !name.equals("InitiatorSecret"))
+                data.properties[name] = value;
         }
     }
+    if (fHaveInitiatorSecretEncrypted)
+        data.properties["InitiatorSecretEncrypted"] = strCiphertext;
 
     /* only for base media */
     if (m->pParent.isNull())
@@ -4240,7 +4281,6 @@ HRESULT Medium::deleteStorage(ComObjPtr<Progress> *aProgress,
         // no longer need lock
         multilock.release();
         markRegistriesModified();
-        m->pVirtualBox->saveModifiedRegistries();
 
         if (aProgress != NULL)
         {
@@ -5799,6 +5839,30 @@ HRESULT Medium::unregisterWithVirtualBox()
     }
 
     return rc;
+}
+
+/**
+ * Like SetProperty but do not trigger a settings store. Only for internal use!
+ */
+HRESULT Medium::setPropertyDirect(const Utf8Str &aName, const Utf8Str &aValue)
+{
+    AutoCaller autoCaller(this);
+    if (FAILED(autoCaller.rc())) return autoCaller.rc();
+
+    AutoWriteLock mlock(this COMMA_LOCKVAL_SRC_POS);
+
+    switch (m->state)
+    {
+        case MediumState_Created:
+        case MediumState_Inaccessible:
+            break;
+        default:
+            return setStateError();
+    }
+
+    m->mapProperties[aName] = aValue;
+
+    return S_OK;
 }
 
 /**

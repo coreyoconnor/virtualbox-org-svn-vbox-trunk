@@ -126,7 +126,7 @@ public:
     STDMETHOD(COMGETTER(MachineIds))(ComSafeArrayOut(BSTR, aMachineIds));
 
     // IMedium methods
-    STDMETHOD(SetIDs)(BOOL aSetImageId, IN_BSTR aImageId,
+    STDMETHOD(SetIds)(BOOL aSetImageId, IN_BSTR aImageId,
                       BOOL aSetParentId, IN_BSTR aParentId);
     STDMETHOD(RefreshState)(MediumState_T *aState);
     STDMETHOD(GetSnapshotIds)(IN_BSTR aMachineId,
@@ -153,6 +153,8 @@ public:
     STDMETHOD(MergeTo)(IMedium *aTarget, IProgress **aProgress);
     STDMETHOD(CloneTo)(IMedium *aTarget, ULONG aVariant,
                         IMedium *aParent, IProgress **aProgress);
+    STDMETHOD(CloneToBase)(IMedium *aTarget, ULONG aVariant,
+                           IProgress **aProgress);
     STDMETHOD(Compact)(IProgress **aProgress);
     STDMETHOD(Resize)(LONG64 aLogicalSize, IProgress **aProgress);
     STDMETHOD(Reset)(IProgress **aProgress);
@@ -183,10 +185,13 @@ public:
     bool getFirstRegistryMachineId(Guid &uuid) const;
     void markRegistriesModified();
 
+    HRESULT setPropertyDirect(const Utf8Str &aName, const Utf8Str &aValue);
+
     HRESULT addBackReference(const Guid &aMachineId,
                              const Guid &aSnapshotId = Guid::Empty);
     HRESULT removeBackReference(const Guid &aMachineId,
                                 const Guid &aSnapshotId = Guid::Empty);
+
 
     const Guid* getFirstMachineBackrefId() const;
     const Guid* getAnyMachineBackref() const;

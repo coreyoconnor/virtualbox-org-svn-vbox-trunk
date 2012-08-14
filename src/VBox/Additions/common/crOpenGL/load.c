@@ -189,9 +189,9 @@ static void stubCheckWindowsCB(unsigned long key, void *data1, void *data2)
     if (!stubSystemWindowExist(pWindow))
     {
 #ifdef WINDOWS
-        crWindowDestroy((GLint)pWindow->hWnd);
+        stubDestroyWindow(CR_CTX_CON(pCtx), (GLint)pWindow->hWnd);
 #else
-        crWindowDestroy((GLint)pWindow->drawable);
+        stubDestroyWindow(CR_CTX_CON(pCtx), (GLint)pWindow->drawable);
 #endif
         return;
     }
@@ -842,7 +842,7 @@ static void stubSyncTrUpdateWindowCB(unsigned long key, void *data1, void *data2
 
     if (!stubSystemWindowExist(pWindow))
     {
-        crWindowDestroy((GLint)pWindow->hWnd);
+        stubDestroyWindow(0, (GLint)pWindow->hWnd);
         return;
     }
 
@@ -990,9 +990,9 @@ static void stubSyncTrCheckWindowsCB(unsigned long key, void *data1, void *data2
     if (!stubSystemWindowExist(pWindow))
     {
 #ifdef WINDOWS
-        crWindowDestroy((GLint)pWindow->hWnd);
+        stubDestroyWindow(0, (GLint)pWindow->hWnd);
 #else
-        crWindowDestroy((GLint)pWindow->drawable);
+        stubDestroyWindow(0, (GLint)pWindow->drawable);
 #endif
         /*No need to flush here as crWindowDestroy does it*/
         return;
@@ -1014,6 +1014,7 @@ static DECLCALLBACK(int) stubSyncThreadProc(RTTHREAD ThreadSelf, void *pvUser)
     HMODULE hVBoxD3D = NULL;
     VBOXCR_UPDATEWNDCB RegionsData;
     HRESULT hr;
+    GLint spuConnection = 0;
 # endif
 #endif
 
@@ -1023,10 +1024,10 @@ static DECLCALLBACK(int) stubSyncThreadProc(RTTHREAD ThreadSelf, void *pvUser)
 #ifdef WINDOWS
     PeekMessage(&msg, NULL, WM_USER, WM_USER, PM_NOREMOVE);
 # ifdef VBOX_WITH_WDDM
-    hVBoxD3D = GetModuleHandle("VBoxDispD3D");
+    hVBoxD3D = GetModuleHandle(VBOX_MODNAME_DISPD3D);
     if (hVBoxD3D)
     {
-        hVBoxD3D = LoadLibrary("VBoxDispD3D");
+        hVBoxD3D = LoadLibrary(VBOX_MODNAME_DISPD3D);
     }
 
     if (hVBoxD3D)
@@ -1049,7 +1050,7 @@ static DECLCALLBACK(int) stubSyncThreadProc(RTTHREAD ThreadSelf, void *pvUser)
                 }
                 else
                 {
-                    crDebug("running with VBoxDispD3D");
+                    crDebug("running with " VBOX_MODNAME_DISPD3D);
                     stub.trackWindowVisibleRgn = 0;
                     stub.bRunningUnderWDDM = true;
                 }
@@ -1060,11 +1061,20 @@ static DECLCALLBACK(int) stubSyncThreadProc(RTTHREAD ThreadSelf, void *pvUser)
             }
         }
     }
-# endif
-#endif
+# endif /* VBOX_WITH_WDDM */
+#endif /* WINDOWS */
 
     crLockMutex(&stub.mutex);
-    stub.spu->dispatch_table.VBoxPackSetInjectThread();
+#if defined(WINDOWS) && defined(VBOX_WITH_WDDM)
+    spuConnection =
+#endif
+            stub.spu->dispatch_table.VBoxPackSetInjectThread(NULL);
+#if defined(WINDOWS) && defined(VBOX_WITH_WDDM)
+    if (stub.bRunningUnderWDDM && !spuConnection)
+    {
+        crError("VBoxPackSetInjectThread failed!");
+    }
+#endif
     crUnlockMutex(&stub.mutex);
 
     RTThreadUserSignal(ThreadSelf);
@@ -1141,6 +1151,10 @@ static DECLCALLBACK(int) stubSyncThreadProc(RTTHREAD ThreadSelf, void *pvUser)
     {
         VBoxDispMpTstCallbacks.pfnDisableEvents();
     }
+    if (spuConnection)
+    {
+        stub.spu->dispatch_table.VBoxConDestroy(spuConnection);
+    }
     if (hVBoxD3D)
     {
         FreeLibrary(hVBoxD3D);
@@ -1202,7 +1216,11 @@ stubInitLocked(void)
 
         ns.name = "vboxhgcm://host:0";
         ns.buffer_size = 1024;
-        crNetServerConnect(&ns);
+        crNetServerConnect(&ns
+#if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
+                , NULL
+#endif
+                );
         if (!ns.conn)
         {
             crWarning("Failed to connect to host. Make sure 3D acceleration is enabled for this VM.");
@@ -1413,7 +1431,11 @@ BOOL WINAPI DllMain(HINSTANCE hDLLInst, DWORD fdwReason, LPVOID lpvReserved)
         crNetInit(NULL, NULL);
         ns.name = "vboxhgcm://host:0";
         ns.buffer_size = 1024;
-        crNetServerConnect(&ns);
+        crNetServerConnect(&ns
+#if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
+                , NULL
+#endif
+);
         if (!ns.conn)
         {
             crDebug("Failed to connect to host (is guest 3d acceleration enabled?), aborting ICD load.");

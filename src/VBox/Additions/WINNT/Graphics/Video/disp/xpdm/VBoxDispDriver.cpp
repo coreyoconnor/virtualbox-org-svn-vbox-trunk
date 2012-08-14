@@ -1000,6 +1000,25 @@ ULONG APIENTRY VBoxDispDrvEscape(SURFOBJ *pso, ULONG iEsc, ULONG cjIn, PVOID pvI
             }
             break;
         }
+        case VBOXESC_ISANYX:
+        {
+            if (pvOut && cjOut == sizeof(DWORD))
+            {
+                DWORD cbReturned;
+                DWORD dwrc = EngDeviceIoControl(pDev->hDriver, IOCTL_VIDEO_VBOX_ISANYX, NULL, 0,
+                        pvOut, sizeof (uint32_t), &cbReturned);
+                if (dwrc == NO_ERROR && cbReturned == sizeof (uint32_t))
+                    return 1;
+                WARN(("EngDeviceIoControl failed, dwrc(%d), cbReturned(%d)", dwrc, cbReturned));
+                return 0;
+            }
+            else
+            {
+                WARN(("VBOXESC_ISANYX invalid parms"));
+                return 0;
+            }
+            break;
+        }
         default:
         {
             LOG(("unsupported iEsc %#x", iEsc));

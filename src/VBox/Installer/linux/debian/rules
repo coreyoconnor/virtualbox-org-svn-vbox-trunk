@@ -41,7 +41,7 @@ export DH_COMPAT=4
 #  BLEEDING_EDGE=xyz
 
 package  := virtualbox
-verpkg   := virtualbox-4.1
+verpkg   := virtualbox-4.2
 current  := $(shell pwd)
 vboxroot := $(shell cd ../../../..; pwd)
 pkgdir   := $(if $(PKGDIR),$(PKGDIR),$(shell cd ../../../../..; pwd))
@@ -264,7 +264,7 @@ binary binary-arch binary-indep: build $(if $(NOMODS),,modules)
 	mv $(archdir)/VBoxCreateUSBNode.sh $(prefix)/usr/share/$(package)
 	for i in VBoxManage VBoxSVC $(if $(HEADLESS),,VBoxSDL) \
 	    $(if $(NOQT),,VirtualBox) VBoxHeadless \
-	    VBoxExtPackHelperApp VBoxBalloonCtrl \
+	    VBoxExtPackHelperApp VBoxBalloonCtrl VBoxAutostart \
 	    $(if $(NOWEBSVC),,vboxwebsrv webtest); do \
 	    mv $(archdir)/$$i $(prefix)/usr/lib/$(package); done
 	$(if $(VNC),mv $(archdir)/ExtensionPacks/VNC $(prefix)/usr/lib/$(package)/ExtensionPacks,)
@@ -316,6 +316,8 @@ endif
 	    usr/bin/VBox                        usr/bin/vboxheadless \
 	    usr/bin/VBox                        usr/bin/VBoxBalloonCtrl \
 	    usr/bin/VBox                        usr/bin/vboxballoonctrl \
+	    usr/bin/VBox                        usr/bin/VBoxAutostart \
+	    usr/bin/VBox                        usr/bin/vboxautostart \
 	    $(if $(NOWEBSVC),,usr/bin/VBox      usr/bin/vboxwebsrv) \
 	    usr/share/virtualbox/src/vboxhost   usr/src/vboxhost-$(ver)
 	dh_desktop
@@ -390,7 +392,8 @@ endif
 	  -Vsdlttf=$(if $(HEADLESS),,libsdl-ttf2.0-0) \
 	  -Vdkms=$(if $(filter _Debian_lenny,$(debrel)),,dkms)
 	dh_md5sums
-	dh_builddeb --destdir $(pkgdir)
+	dh_builddeb --destdir $(pkgdir) -- \
+	  $(if $(filter _Ubuntu_hardy _Ubuntu_lucid,$(debrel)),,-Zxz)
 endif
 
 .PHONY: binary modules binary-arch binary-indep clean checkroot

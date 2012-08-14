@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,6 +23,7 @@
 #include <VBox/com/ptr.h>
 #include <VBox/com/VirtualBox.h>
 #include <VBox/com/string.h>
+#include <VBox/com/array.h>
 #endif /* !VBOX_ONLY_DOCS */
 
 #include <iprt/types.h>
@@ -160,6 +161,8 @@ HRESULT showProgress(ComPtr<IProgress> progress);
 void showLogo(PRTSTREAM pStrm);
 
 #ifndef VBOX_ONLY_DOCS
+RTEXITCODE readPasswordFile(const char *pszFilename, com::Utf8Str *pPasswd);
+
 int handleInternalCommands(HandlerArg *a);
 #endif /* !VBOX_ONLY_DOCS */
 
@@ -170,16 +173,19 @@ unsigned int getMaxNics(IVirtualBox* vbox, IMachine* mach);
 #endif
 
 /* VBoxManageModifyVM.cpp */
+#ifndef VBOX_ONLY_DOCS
+void parseGroups(const char *pcszGroups, com::SafeArray<BSTR> *pGroups);
+#endif
 int handleModifyVM(HandlerArg *a);
 
 /* VBoxManageDebugVM.cpp */
 int handleDebugVM(HandlerArg *a);
 
 /* VBoxManageGuestProp.cpp */
-extern void usageGuestProperty(PRTSTREAM pStrm);
+extern void usageGuestProperty(PRTSTREAM pStrm, const char *pcszSep1, const char *pcszSep2);
 
 /* VBoxManageGuestCtrl.cpp */
-extern void usageGuestControl(PRTSTREAM pStrm);
+extern void usageGuestControl(PRTSTREAM pStrm, const char *pcszSep1, const char *pcszSep2);
 
 #ifndef VBOX_ONLY_DOCS
 /* VBoxManageGuestProp.cpp */
@@ -238,6 +244,7 @@ RTEXITCODE handleConvertFromRaw(int argc, char *argv[]);
 int handleShowHardDiskInfo(HandlerArg *a);
 int handleCloseMedium(HandlerArg *a);
 int parseDiskType(const char *psz, MediumType_T *pDiskType);
+int parseBool(const char *psz, bool *pb);
 
 /* VBoxManageStorageController.cpp */
 int handleStorageAttach(HandlerArg *a);

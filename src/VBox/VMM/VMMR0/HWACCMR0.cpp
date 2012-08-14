@@ -622,7 +622,7 @@ VMMR0DECL(int) HWACCMR0Init(void)
     g_HvmR0.pfnTermVM           = hmR0DummyTermVM;
     g_HvmR0.pfnSetupVM          = hmR0DummySetupVM;
 
-    /* Default is global VT-x/AMD-V init */
+    /* Default is global VT-x/AMD-V init. */
     g_HvmR0.fGlobalInit         = true;
 
     /*
@@ -635,7 +635,7 @@ VMMR0DECL(int) HWACCMR0Init(void)
     }
 
     /*
-     * Check for VT-x and AMD-V capabilities
+     * Check for VT-x and AMD-V capabilities.
      */
     int rc;
     if (ASMHasCpuId())
@@ -654,9 +654,12 @@ VMMR0DECL(int) HWACCMR0Init(void)
                  &g_HvmR0.cpuid.u32AMDFeatureEDX);
 
         /* Go to CPU specific initialization code. */
-        if (   u32VendorEBX == X86_CPUID_VENDOR_INTEL_EBX
-            && u32VendorECX == X86_CPUID_VENDOR_INTEL_ECX
-            && u32VendorEDX == X86_CPUID_VENDOR_INTEL_EDX)
+        if (   (   u32VendorEBX == X86_CPUID_VENDOR_INTEL_EBX
+                && u32VendorECX == X86_CPUID_VENDOR_INTEL_ECX
+                && u32VendorEDX == X86_CPUID_VENDOR_INTEL_EDX)
+            || (   u32VendorEBX == X86_CPUID_VENDOR_VIA_EBX
+                && u32VendorECX == X86_CPUID_VENDOR_VIA_ECX
+                && u32VendorEDX == X86_CPUID_VENDOR_VIA_EDX))
         {
             rc = hmR0InitIntel(u32FeaturesECX, u32FeaturesEDX);
             if (RT_FAILURE(rc))
@@ -782,7 +785,7 @@ static DECLCALLBACK(void) hmR0InitIntelCpu(RTCPUID idCpu, void *pvUser1, void *p
             == MSR_IA32_FEATURE_CONTROL_VMXON ) /* Some BIOSes forget to set the locked bit. */
        )
     {
-        /* MSR is not yet locked; we can change it ourselves here */
+        /* MSR is not yet locked; we can change it ourselves here. */
         ASMWrMsr(MSR_IA32_FEATURE_CONTROL,
                  g_HvmR0.vmx.msr.feature_ctrl | MSR_IA32_FEATURE_CONTROL_VMXON | MSR_IA32_FEATURE_CONTROL_LOCK);
         fFC = ASMRdMsr(MSR_IA32_FEATURE_CONTROL);
@@ -865,7 +868,7 @@ static int hmR0EnableCpu(PVM pVM, RTCPUID idCpu)
 
     pCpu->idCpu         = idCpu;
     pCpu->uCurrentASID  = 0;    /* we'll aways increment this the first time (host uses ASID 0) */
-    pCpu->cTLBFlushes   = 0;
+    /* Do NOT reset cTLBFlushes here, see @bugref{6255}. */
 
     /* Should never happen */
     AssertLogRelMsgReturn(pCpu->hMemObj != NIL_RTR0MEMOBJ, ("hmR0EnableCpu failed idCpu=%u.\n", idCpu), VERR_HM_IPE_1);
@@ -938,6 +941,7 @@ static DECLCALLBACK(int32_t) hmR0EnableAllCpuOnce(void *pvUser, void *pvUserIgno
             for (unsigned iCpu = 0; iCpu < RT_ELEMENTS(g_HvmR0.aCpuInfo); iCpu++)
             {
                 g_HvmR0.aCpuInfo[iCpu].fConfigured = true;
+                g_HvmR0.aCpuInfo[iCpu].cTLBFlushes = 0;
                 Assert(g_HvmR0.aCpuInfo[iCpu].hMemObj == NIL_RTR0MEMOBJ);
             }
 
@@ -945,7 +949,7 @@ static DECLCALLBACK(int32_t) hmR0EnableAllCpuOnce(void *pvUser, void *pvUserIgno
             g_HvmR0.fGlobalInit = pVM->hwaccm.s.fGlobalInit = true;
         }
         else
-            AssertMsgFailed(("HWACCMR0EnableAllCpus/SUPR0EnableVTx: rc=%Rrc\n", rc));
+            AssertMsgFailed(("hmR0EnableAllCpuOnce/SUPR0EnableVTx: rc=%Rrc\n", rc));
     }
     else
     {
@@ -966,6 +970,7 @@ static DECLCALLBACK(int32_t) hmR0EnableAllCpuOnce(void *pvUser, void *pvUserIgno
                 ASMMemZeroPage(pvR0);
             }
             g_HvmR0.aCpuInfo[i].fConfigured = false;
+            g_HvmR0.aCpuInfo[i].cTLBFlushes = 0;
         }
 
         if (g_HvmR0.fGlobalInit)
@@ -976,7 +981,7 @@ static DECLCALLBACK(int32_t) hmR0EnableAllCpuOnce(void *pvUser, void *pvUserIgno
             rc = RTMpOnAll(hmR0EnableCpuCallback, (void *)pVM, &FirstRc);
             if (RT_SUCCESS(rc))
                 rc = hmR0FirstRcGetStatus(&FirstRc);
-            AssertMsgRC(rc, ("HWACCMR0EnableAllCpus failed for cpu %d with rc=%d\n", hmR0FirstRcGetCpuId(&FirstRc), rc));
+            AssertMsgRC(rc, ("hmR0EnableAllCpuOnce failed for cpu %d with rc=%d\n", hmR0FirstRcGetCpuId(&FirstRc), rc));
         }
         else
             rc = VINF_SUCCESS;
@@ -1238,7 +1243,7 @@ VMMR0DECL(int) HWACCMR0InitVM(PVM pVM)
         /* Invalidate the last cpu we were running on. */
         pVCpu->hwaccm.s.idLastCpu           = NIL_RTCPUID;
 
-        /* we'll aways increment this the first time (host uses ASID 0) */
+        /* We'll aways increment this the first time (host uses ASID 0) */
         pVCpu->hwaccm.s.uCurrentASID        = 0;
     }
 
@@ -1855,17 +1860,15 @@ VMMR0DECL(void) HWACCMR0DumpDescriptor(PCX86DESCHC pDesc, RTSEL Sel, const char 
     /*
      * Limit and Base and format the output.
      */
-    uint32_t    u32Limit = X86DESC_LIMIT(*pDesc);
-    if (pDesc->Gen.u1Granularity)
-        u32Limit = u32Limit << PAGE_SHIFT | PAGE_OFFSET_MASK;
+    uint32_t    u32Limit = X86DESC_LIMIT_G(pDesc);
 
 # if HC_ARCH_BITS == 64
-    uint64_t    u32Base =  X86DESC64_BASE(*pDesc);
+    uint64_t    u32Base  = X86DESC64_BASE(pDesc);
 
     Log(("%s %04x - %RX64 %RX64 - base=%RX64 limit=%08x dpl=%d %s\n", pszMsg,
          Sel, pDesc->au64[0], pDesc->au64[1], u32Base, u32Limit, pDesc->Gen.u2Dpl, szMsg));
 # else
-    uint32_t    u32Base =  X86DESC_BASE(*pDesc);
+    uint32_t    u32Base  = X86DESC_BASE(pDesc);
 
     Log(("%s %04x - %08x %08x - base=%08x limit=%08x dpl=%d %s\n", pszMsg,
          Sel, pDesc->au32[0], pDesc->au32[1], u32Base, u32Limit, pDesc->Gen.u2Dpl, szMsg));
@@ -1927,7 +1930,7 @@ VMMR0DECL(void) HWACCMDumpRegs(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx)
     /*
      * Format the registers.
      */
-    if (CPUMIsGuestIn64BitCode(pVCpu, CPUMCTX2CORE(pCtx)))
+    if (CPUMIsGuestIn64BitCode(pVCpu))
     {
         Log(("rax=%016RX64 rbx=%016RX64 rcx=%016RX64 rdx=%016RX64\n"
              "rsi=%016RX64 rdi=%016RX64 r8 =%016RX64 r9 =%016RX64\n"

@@ -32,6 +32,7 @@
 #include <iprt/path.h>
 #include <iprt/string.h>
 #include <iprt/stream.h>
+#include <iprt/symlink.h>
 
 #ifndef RT_OS_WINDOWS
 # include <sys/stat.h> /* need umask */
@@ -47,25 +48,18 @@
 *   Defined Constants And Macros                                               *
 *******************************************************************************/
 
+/** Generic option indices for commands. */
+enum
+{
+    VBOXSERVICETOOLBOXOPT_MACHINE_READABLE = 1000,
+    VBOXSERVICETOOLBOXOPT_VERBOSE
+};
+
 /** Options indices for "vbox_cat". */
 typedef enum VBOXSERVICETOOLBOXCATOPT
 {
     VBOXSERVICETOOLBOXCATOPT_NO_CONTENT_INDEXED = 1000
 } VBOXSERVICETOOLBOXCATOPT;
-
-/** Options indices for "vbox_ls". */
-typedef enum VBOXSERVICETOOLBOXLSOPT
-{
-    VBOXSERVICETOOLBOXLSOPT_MACHINE_READABLE = 1000,
-    VBOXSERVICETOOLBOXLSOPT_VERBOSE
-} VBOXSERVICETOOLBOXLSOPT;
-
-/** Options indices for "vbox_stat". */
-typedef enum VBOXSERVICETOOLBOXSTATOPT
-{
-    VBOXSERVICETOOLBOXSTATOPT_MACHINE_READABLE = 1000
-} VBOXSERVICETOOLBOXSTATOPT;
-
 
 /** Flags for "vbox_ls". */
 typedef enum VBOXSERVICETOOLBOXLSFLAG
@@ -112,23 +106,40 @@ typedef struct VBOXSERVICETOOLBOXDIRENTRY
 
 
 /**
+ * Displays a common header for all help text to stdout.
+ */
+static void VBoxServiceToolboxShowUsageHeader(void)
+{
+    RTPrintf(VBOX_PRODUCT " Guest Toolbox Version "
+             VBOX_VERSION_STRING "\n"
+             "(C) " VBOX_C_YEAR " " VBOX_VENDOR "\n"
+             "All rights reserved.\n"
+             "\n");
+    RTPrintf("Usage:\n\n");
+}
+
+
+/**
  * Displays a help text to stdout.
  */
 static void VBoxServiceToolboxShowUsage(void)
 {
-    RTPrintf("Toolbox Usage:\n"
-             "cat [FILE] - Concatenate FILE(s), or standard input, to standard output.\n"
+    VBoxServiceToolboxShowUsageHeader();
+    RTPrintf("  VBoxService [--use-toolbox] vbox_<command> <general options> <parameters>\n\n"
+             "General options:\n\n"
+             "  --machinereadable          produce all output in machine-readable form\n"
+             "  -V                         print version number and exit\n"
              "\n"
-             /** @todo Document options! */
-             "ls [OPTION]... FILE... - List information about the FILEs (the current directory by default).\n"
-             "\n"
-             /** @todo Document options! */
-             "mkdir [OPTION]... DIRECTORY... - Create the DIRECTORY(ies), if they do not already exist.\n"
-             "\n"
-             /** @todo Document options! */
-             "stat [OPTION]... FILE... - Display file or file system status.\n"
-             "\n"
-             /** @todo Document options! */
+             "Commands:\n\n"
+             "  cat <general options>      <file>...\n"
+             "  ls <general options>       [--dereference|-L] [-l] [-R]\n"
+             "                             [--verbose|-v] [<file>...]\n"
+             "  rm <general options>       [-r|-R] <file>...\n"
+             "  mkdir <general options>    [--mode|-m] [--parents|-p]\n"
+             "                             [--verbose|-v] <directory>...\n"
+             "  stat <general options>     [--file-system|-f]\n"
+             "                             [--dereference|-L] [--terse|-t]\n"
+             "                             [--verbose|-v] <file>...\n"
              "\n");
 }
 
@@ -293,6 +304,13 @@ static int VBoxServiceToolboxCatOutput(RTFILE hInput, RTFILE hOutput)
 }
 
 
+/** @todo Document options! */
+static char g_paszCatHelp[] =
+    "  VBoxService [--use-toolbox] vbox_cat <general options> <file>...\n\n"
+    "Concatenate files, or standard input, to standard output.\n"
+    "\n";
+
+
 /**
  * Main function for tool "vbox_cat".
  *
@@ -362,7 +380,8 @@ static RTEXITCODE VBoxServiceToolboxCat(int argc, char **argv)
                 break;
 
             case 'h':
-                VBoxServiceToolboxShowUsage();
+                VBoxServiceToolboxShowUsageHeader();
+                RTPrintf("%s", g_paszCatHelp);
                 return RTEXITCODE_SUCCESS;
 
             case 'o':
@@ -746,6 +765,19 @@ static int VBoxServiceToolboxLsHandleDir(const char *pszDir,
 }
 
 
+/** @todo Document options! */
+static char g_paszLsHelp[] =
+    "  VBoxService [--use-toolbox] vbox_ls <general options> [option]...\n"
+    "                                      [<file>...]\n\n"
+    "List information about files (the current directory by default).\n\n"
+    "Options:\n\n"
+    "  [--dereference|-L]\n"
+    "  [-l][-R]\n"
+    "  [--verbose|-v]\n"
+    "  [<file>...]\n"
+    "\n";
+
+
 /**
  * Main function for tool "vbox_ls".
  *
@@ -757,11 +789,11 @@ static RTEXITCODE VBoxServiceToolboxLs(int argc, char **argv)
 {
     static const RTGETOPTDEF s_aOptions[] =
     {
-        { "--machinereadable", VBOXSERVICETOOLBOXLSOPT_MACHINE_READABLE,      RTGETOPT_REQ_NOTHING },
+        { "--machinereadable", VBOXSERVICETOOLBOXOPT_MACHINE_READABLE,      RTGETOPT_REQ_NOTHING },
         { "--dereference",     'L',                                           RTGETOPT_REQ_NOTHING },
         { NULL,                'l',                                           RTGETOPT_REQ_NOTHING },
         { NULL,                'R',                                           RTGETOPT_REQ_NOTHING },
-        { "--verbose",         VBOXSERVICETOOLBOXLSOPT_VERBOSE,               RTGETOPT_REQ_NOTHING}
+        { "--verbose",         VBOXSERVICETOOLBOXOPT_VERBOSE,               RTGETOPT_REQ_NOTHING}
     };
 
     int ch;
@@ -787,7 +819,8 @@ static RTEXITCODE VBoxServiceToolboxLs(int argc, char **argv)
         switch (ch)
         {
             case 'h':
-                VBoxServiceToolboxShowUsage();
+                VBoxServiceToolboxShowUsageHeader();
+                RTPrintf("%s", g_paszLsHelp);
                 return RTEXITCODE_SUCCESS;
 
             case 'L': /* Dereference symlinks. */
@@ -798,7 +831,7 @@ static RTEXITCODE VBoxServiceToolboxLs(int argc, char **argv)
                 fOutputFlags |= VBOXSERVICETOOLBOXOUTPUTFLAG_LONG;
                 break;
 
-            case VBOXSERVICETOOLBOXLSOPT_MACHINE_READABLE:
+            case VBOXSERVICETOOLBOXOPT_MACHINE_READABLE:
                 fOutputFlags |= VBOXSERVICETOOLBOXOUTPUTFLAG_PARSEABLE;
                 break;
 
@@ -806,7 +839,7 @@ static RTEXITCODE VBoxServiceToolboxLs(int argc, char **argv)
                 fFlags |= VBOXSERVICETOOLBOXLSFLAG_RECURSIVE;
                 break;
 
-            case VBOXSERVICETOOLBOXLSOPT_VERBOSE:
+            case VBOXSERVICETOOLBOXOPT_VERBOSE:
                 fVerbose = true;
                 break;
 
@@ -905,6 +938,182 @@ static RTEXITCODE VBoxServiceToolboxLs(int argc, char **argv)
 }
 
 
+static char g_paszRmHelp[] =
+    "  VBoxService [--use-toolbox] vbox_rm <general options> <file>...\n\n"
+    "Delete files and optionally directories if the '-R' or '-r' option is specified.\n"
+    "If a file or directory cannot be deleted, an error message is printed if the\n"
+    "'--machine-readable' option is not specified and the next file will be\n"
+    "processed. The root directory is always ignored.\n\n"
+    "Options:\n\n"
+    "  [-R|-r]                    Recursively delete directories too.\n"
+    "\n";
+
+
+/**
+ * Report the result of a vbox_rm operation - either errors to stderr (not
+ * machine-readable) or everything to stdout as <name>\0<rc>\0 (machine-
+ * readable format).  The message may optionally contain a '%s' for the file
+ * name and an %Rrc for the result code in that order.  In future a "verbose"
+ * flag may be added, without which nothing will be output in non-machine-
+ * readable mode.  Sets prc if rc is a non-success code.
+ */
+static void toolboxRmReport(const char *pcszMessage, const char *pcszFile,
+                            int rc, uint32_t fOutputFlags, int *prc)
+{
+    if (!(fOutputFlags & VBOXSERVICETOOLBOXOUTPUTFLAG_PARSEABLE))
+    {
+        if (RT_FAILURE(rc))
+            RTMsgError(pcszMessage, pcszFile, rc);
+    }
+    else
+        RTPrintf("fname=%s%crc=%d%c", pcszFile, 0, rc, 0);
+    if (prc && RT_FAILURE(rc))
+        *prc = rc;
+}
+
+
+/**
+ * Main function for tool "vbox_rm".
+ *
+ * @return  RTEXITCODE.
+ * @param   argc                    Number of arguments.
+ * @param   argv                    Pointer to argument array.
+ */
+static RTEXITCODE VBoxServiceToolboxRm(int argc, char **argv)
+{
+    static const RTGETOPTDEF s_aOptions[] =
+    {
+        { "--machinereadable", VBOXSERVICETOOLBOXOPT_MACHINE_READABLE,
+          RTGETOPT_REQ_NOTHING },
+        /* Be like POSIX, which has both 'r' and 'R'. */
+        { NULL,                'r',
+          RTGETOPT_REQ_NOTHING },
+        { NULL,                'R',
+          RTGETOPT_REQ_NOTHING },
+    };
+
+    enum
+    {
+        VBOXSERVICETOOLBOXRMFLAG_RECURSIVE = RT_BIT_32(0)
+    };
+
+    int ch, rc, rc2;
+    RTGETOPTUNION ValueUnion;
+    RTGETOPTSTATE GetState;
+    rc = RTGetOptInit(&GetState, argc, argv, s_aOptions,
+                      RT_ELEMENTS(s_aOptions), 1 /*iFirst*/,
+                      RTGETOPTINIT_FLAGS_OPTS_FIRST);
+    AssertRCReturn(rc, RTEXITCODE_INIT);
+
+    bool     fVerbose     = false;
+    uint32_t fFlags       = 0;
+    uint32_t fOutputFlags = 0;
+    int cNonOptions       = 0;
+
+    while (   (ch = RTGetOpt(&GetState, &ValueUnion))
+              && RT_SUCCESS(rc))
+    {
+        /* For options that require an argument, ValueUnion has received the value. */
+        switch (ch)
+        {
+            case 'h':
+                VBoxServiceToolboxShowUsageHeader();
+                RTPrintf("%s", g_paszRmHelp);
+                return RTEXITCODE_SUCCESS;
+
+            case 'V':
+                VBoxServiceToolboxShowVersion();
+                return RTEXITCODE_SUCCESS;
+
+            case VBOXSERVICETOOLBOXOPT_MACHINE_READABLE:
+                fOutputFlags |= VBOXSERVICETOOLBOXOUTPUTFLAG_PARSEABLE;
+                break;
+
+            case 'r':
+            case 'R': /* Allow directories too. */
+                fFlags |= VBOXSERVICETOOLBOXRMFLAG_RECURSIVE;
+                break;
+
+            case VINF_GETOPT_NOT_OPTION:
+                /* RTGetOpt will sort these to the end of the argv vector so
+                 * that we will deal with them afterwards. */
+                ++cNonOptions;
+                break;
+
+            default:
+                return RTGetOptPrintError(ch, &ValueUnion);
+        }
+    }
+    /* We need at least one file. */
+    if (RT_SUCCESS(rc) && cNonOptions == 0)
+    {
+        RTMsgError("No files or directories specified.");
+        return RTEXITCODE_FAILURE;
+    }
+
+    if (RT_SUCCESS(rc))
+    {
+        /* Print magic/version. */
+        if (fOutputFlags & VBOXSERVICETOOLBOXOUTPUTFLAG_PARSEABLE)
+        {
+            rc = VBoxServiceToolboxStrmInit();
+            if (RT_FAILURE(rc))
+                RTMsgError("Error while initializing parseable streams, rc=%Rrc\n", rc);
+            VBoxServiceToolboxPrintStrmHeader("vbt_rm", 1 /* Stream version */);
+        }
+    }
+
+    if (RT_SUCCESS(rc))
+    {
+        for (int i = argc - cNonOptions; i < argc; ++i)
+        {
+            /* I'm sure this isn't the most effective way, but I hope it will
+             * be readable and reliable code. */
+            if (RTDirExists(argv[i]) && !RTSymlinkExists(argv[i]))
+            {
+                if (!(fFlags & VBOXSERVICETOOLBOXRMFLAG_RECURSIVE))
+                    toolboxRmReport("Cannot remove directory '%s' as the '-R' option was not specified.\n",
+                                    argv[i], VERR_INVALID_PARAMETER,
+                                    fOutputFlags, &rc);
+                else
+                {
+                    rc2 = RTDirRemoveRecursive(argv[i],
+                                               RTDIRRMREC_F_CONTENT_AND_DIR);
+                    toolboxRmReport("The following error occurred while removing directory '%s': %Rrc.\n",
+                                    argv[i], rc2, fOutputFlags, &rc);
+                }
+            }
+            else if (RTPathExists(argv[i]) || RTSymlinkExists(argv[i]))
+            {
+                rc2 = RTFileDelete(argv[i]);
+                toolboxRmReport("The following error occurred while removing file '%s': %Rrc.\n",
+                                argv[i], rc2, fOutputFlags, &rc);
+            }
+            else
+                toolboxRmReport("File '%s' does not exist.\n", argv[i],
+                                VERR_FILE_NOT_FOUND, fOutputFlags, &rc);
+        }
+
+        if (fOutputFlags & VBOXSERVICETOOLBOXOUTPUTFLAG_PARSEABLE) /* Output termination. */
+            VBoxServiceToolboxPrintStrmTermination();
+    }
+    return RT_SUCCESS(rc) ? RTEXITCODE_SUCCESS : RTEXITCODE_FAILURE;
+}
+
+
+/** @todo Document options! */
+static char g_paszMkDirHelp[] =
+    "  VBoxService [--use-toolbox] vbox_mkdir <general options> [options]\n"
+    "                                         <directory>...\n\n"
+    "Options:\n\n"
+    "  [--mode=<mode>|-m <mode>]  The file mode to set (chmod) on the created\n"
+    "                             directories.  Default: a=rwx & umask.\n"
+    "  [--parents|-p]             Create parent directories as needed, no\n"
+    "                             error if the directory already exists.\n"
+    "  [--verbose|-v]             Display a message for each created directory.\n"
+    "\n";
+
+
 /**
  * Main function for tool "vbox_mkdir".
  *
@@ -962,17 +1171,8 @@ static RTEXITCODE VBoxServiceToolboxMkDir(int argc, char **argv)
                 break;
 
             case 'h':
-                RTPrintf("Usage: %s [options] dir1 [dir2...]\n"
-                         "\n"
-                         "Options:\n"
-                         "    -m,--mode=<mode>  The file mode to set (chmod) on the created\n"
-                         "                      directories.  Default: a=rwx & umask.\n"
-                         "    -p,--parents      Create parent directories as needed, no\n"
-                         "                      error if the directory already exists.\n"
-                         "    -v,--verbose      Display a message for each created directory.\n"
-                         "    -V,--version      Display the version and exit\n"
-                         "    -h,--help         Display this help text and exit.\n"
-                         , argv[0]);
+                VBoxServiceToolboxShowUsageHeader();
+                RTPrintf("%s", g_paszMkDirHelp);
                 return RTEXITCODE_SUCCESS;
 
             case 'V':
@@ -1010,6 +1210,18 @@ static RTEXITCODE VBoxServiceToolboxMkDir(int argc, char **argv)
 }
 
 
+/** @todo Document options! */
+static char g_paszStatHelp[] =
+    "  VBoxService [--use-toolbox] vbox_stat <general options> [options] <file>...\n\n"
+    "Display file or file system status.\n\n"
+    "Options:\n\n"
+    "  [--file-system|-f]\n"
+    "  [--dereference|-L]\n"
+    "  [--terse|-t]\n"
+    "  [--verbose|-v]\n"
+    "\n";
+
+
 /**
  * Main function for tool "vbox_stat".
  *
@@ -1023,7 +1235,7 @@ static RTEXITCODE VBoxServiceToolboxStat(int argc, char **argv)
     {
         { "--file-system",     'f',                                          RTGETOPT_REQ_NOTHING },
         { "--dereference",     'L',                                          RTGETOPT_REQ_NOTHING },
-        { "--machinereadable", VBOXSERVICETOOLBOXLSOPT_MACHINE_READABLE,     RTGETOPT_REQ_NOTHING },
+        { "--machinereadable", VBOXSERVICETOOLBOXOPT_MACHINE_READABLE,     RTGETOPT_REQ_NOTHING },
         { "--terse",           't',                                          RTGETOPT_REQ_NOTHING },
         { "--verbose",         'v',                                          RTGETOPT_REQ_NOTHING }
     };
@@ -1055,7 +1267,7 @@ static RTEXITCODE VBoxServiceToolboxStat(int argc, char **argv)
                 rc = VERR_INVALID_PARAMETER;
                 break;
 
-            case VBOXSERVICETOOLBOXLSOPT_MACHINE_READABLE:
+            case VBOXSERVICETOOLBOXOPT_MACHINE_READABLE:
                 fOutputFlags |= VBOXSERVICETOOLBOXOUTPUTFLAG_PARSEABLE;
                 break;
 
@@ -1064,7 +1276,8 @@ static RTEXITCODE VBoxServiceToolboxStat(int argc, char **argv)
                 break;
 
             case 'h':
-                VBoxServiceToolboxShowUsage();
+                VBoxServiceToolboxShowUsageHeader();
+                RTPrintf("%s", g_paszStatHelp);
                 return RTEXITCODE_SUCCESS;
 
             case 'V':
@@ -1158,6 +1371,7 @@ static PFNHANDLER vboxServiceToolboxLookUpHandler(const char *pszTool)
     {
         { "cat",    VBoxServiceToolboxCat   },
         { "ls",     VBoxServiceToolboxLs    },
+        { "rm",     VBoxServiceToolboxRm    },
         { "mkdir",  VBoxServiceToolboxMkDir },
         { "stat",   VBoxServiceToolboxStat  },
     };
@@ -1211,7 +1425,16 @@ bool VBoxServiceToolboxMain(int argc, char **argv, RTEXITCODE *prcExit)
         pfnHandler = vboxServiceToolboxLookUpHandler(pszTool);
         if (!pfnHandler)
         {
-           *prcExit = RTMsgErrorExit(RTEXITCODE_SYNTAX, "Toolbox program '%s' does not exist", pszTool);
+           *prcExit = RTEXITCODE_SUCCESS;
+           if (!strcmp(pszTool, "-V"))
+           {
+               VBoxServiceToolboxShowVersion();
+               return true;
+           }
+           if (   (strcmp(pszTool, "help")) && (strcmp(pszTool, "--help"))
+               && (strcmp(pszTool, "-h")))
+               *prcExit = RTEXITCODE_SYNTAX;
+           VBoxServiceToolboxShowUsage();
            return true;
         }
     }

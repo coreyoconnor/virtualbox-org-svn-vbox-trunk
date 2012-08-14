@@ -117,6 +117,7 @@
 
 /* Other VBox includes: */
 #include <iprt/asm.h>
+#include <iprt/ctype.h>
 #include <iprt/err.h>
 #include <iprt/param.h>
 #include <iprt/path.h>
@@ -124,6 +125,7 @@
 #include <iprt/file.h>
 #include <iprt/ldr.h>
 #include <iprt/system.h>
+#include <iprt/stream.h>
 
 #include <VBox/vd.h>
 #include <VBox/version.h>
@@ -304,6 +306,7 @@ VBoxGlobal::VBoxGlobal()
     , mRecompileUser(false)
     , mVerString("1.0")
     , m3DAvailable(false)
+    , mSettingsPwSet(false)
 {
 }
 
@@ -465,8 +468,8 @@ bool VBoxGlobal::startMachine(const QString &strMachineId)
     AssertMsg(mValid, ("VBoxGlobal is invalid"));
     AssertMsg(!m_pVirtualMachine, ("Machine already started"));
 
-    /* Create session: */
-    CSession session = vboxGlobal().openSession(strMachineId);
+    /* Create VM session: */
+    CSession session = vboxGlobal().openSession(strMachineId, KLockType_VM);
     if (session.isNull())
         return false;
 
@@ -1105,7 +1108,7 @@ bool VBoxGlobal::toLPTPortNumbers (const QString &aName, ulong &aIRQ,
  *       problem though and needs to be addressed using exceptions (see also the
  *       @todo in UIMedium::details()).
  */
-QString VBoxGlobal::details (const CMedium &aMedium, bool aPredictDiff)
+QString VBoxGlobal::details (const CMedium &aMedium, bool aPredictDiff, bool fUseHtml /* = true */)
 {
     CMedium cmedium (aMedium);
     UIMedium medium;
@@ -1119,7 +1122,8 @@ QString VBoxGlobal::details (const CMedium &aMedium, bool aPredictDiff)
             return QString();
     }
 
-    return medium.detailsHTML (true /* aNoDiffs */, aPredictDiff);
+    return fUseHtml ? medium.detailsHTML (true /* aNoDiffs */, aPredictDiff) :
+                      medium.details(true /* aNoDiffs */, aPredictDiff);
 }
 
 /**
@@ -1809,11 +1813,12 @@ bool VBoxGlobal::showVirtualBoxLicense()
  *  it is no more necessary.
  *
  *  @param aId          Machine ID.
- *  @param aExisting    @c true to open an existing session with the machine
- *                      which is already running, @c false to open a new direct
- *                      session.
+ *  @param aLockType    @c KLockType_Shared to open an existing session with
+ *                      the machine which is already running, @c KLockType_Write
+ *                      to open a new direct session, @c KLockType_VM to open
+ *                      a new session for running a VM in this process.
  */
-CSession VBoxGlobal::openSession(const QString &aId, bool aExisting /* = false */)
+CSession VBoxGlobal::openSession(const QString &aId, KLockType aLockType /* = KLockType_Shared */)
 {
     CSession session;
     session.createInstance(CLSID_Session);
@@ -1826,8 +1831,7 @@ CSession VBoxGlobal::openSession(const QString &aId, bool aExisting /* = false *
     CMachine foundMachine = CVirtualBox(mVBox).FindMachine(aId);
     if (!foundMachine.isNull())
     {
-        foundMachine.LockMachine(session,
-                                 (aExisting) ? KLockType_Shared : KLockType_Write);
+        foundMachine.LockMachine(session, aLockType);
         if (session.GetType() == KSessionType_Shared)
         {
             CMachine machine = session.GetMachine();
@@ -4401,10 +4405,50 @@ void VBoxGlobal::init()
             if (++i < argc)
                 vm_render_mode_str = qApp->argv() [i];
         }
-        else if (!::strcmp (arg, "--no-startvm-errormsgbox"))
+        else if (!::strcmp (arg, "--settingspw"))
         {
-            mShowStartVMErrors = false;
+            if (++i < argc)
+            {
+                RTStrCopy(mSettingsPw, sizeof(mSettingsPw), qApp->argv() [i]);
+                mSettingsPwSet = true;
+            }
         }
+        else if (!::strcmp (arg, "--settingspwfile"))
+        {
+            if (++i < argc)
+            {
+                size_t cbFile;
+                char *pszFile = qApp->argv() [i];
+                bool fStdIn = !::strcmp(pszFile, "stdin");
+                int vrc = VINF_SUCCESS;
+                PRTSTREAM pStrm;
+                if (!fStdIn)
+                    vrc = RTStrmOpen(pszFile, "r", &pStrm);
+                else
+                    pStrm = g_pStdIn;
+                if (RT_SUCCESS(vrc))
+                {
+                    vrc = RTStrmReadEx(pStrm, mSettingsPw, sizeof(mSettingsPw)-1, &cbFile);
+                    if (RT_SUCCESS(vrc))
+                    {
+                        if (cbFile >= sizeof(mSettingsPw)-1)
+                            continue;
+                        else
+                        {
+                            unsigned i;
+                            for (i = 0; i < cbFile && !RT_C_IS_CNTRL(mSettingsPw[i]); i++)
+                                ;
+                            mSettingsPw[i] = '\0';
+                            mSettingsPwSet = true;
+                        }
+                    }
+                    if (!fStdIn)
+                        RTStrmClose(pStrm);
+                }
+            }
+        }
+        else if (!::strcmp (arg, "--no-startvm-errormsgbox"))
+            mShowStartVMErrors = false;
         else if (!::strcmp(arg, "--disable-patm"))
             mDisablePatm = true;
         else if (!::strcmp(arg, "--disable-csam"))
@@ -4476,6 +4520,9 @@ void VBoxGlobal::init()
             vmUuid = m.GetId();
         }
     }
+
+    if (mSettingsPwSet)
+        mVBox.SetSettingsSecret(mSettingsPw);
 
     if (bForceSeamless && !vmUuid.isEmpty())
     {

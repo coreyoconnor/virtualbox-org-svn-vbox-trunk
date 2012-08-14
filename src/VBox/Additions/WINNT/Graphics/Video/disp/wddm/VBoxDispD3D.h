@@ -75,14 +75,9 @@ typedef struct VBOXWDDMDISP_ADAPTER
     HANDLE hAdapter;
     UINT uIfVersion;
     UINT uRtVersion;
-    VBOXDISPD3D D3D;
-    IDirect3D9Ex * pD3D9If;
     D3DDDI_ADAPTERCALLBACKS RtCallbacks;
-    uint32_t cFormstOps;
-    FORMATOP *paFormstOps;
-    uint32_t cSurfDescs;
-    DDSURFACEDESC *paSurfDescs;
-    UINT cMaxSimRTs;
+    VBOXWDDMDISP_D3D D3D;
+    VBOXWDDMDISP_FORMATS Formats;
 #ifdef VBOX_WDDMDISP_WITH_PROFILE
     VBoxDispProfileFpsCounter ProfileDdiFps;
     VBoxDispProfileSet ProfileDdiFunc;
@@ -206,9 +201,7 @@ typedef struct VBOXWDDMDISP_DEVICE
      * is split into two calls : SetViewport & SetZRange */
     D3DVIEWPORT9 ViewPort;
     VBOXWDDMDISP_CONTEXT DefaultContext;
-#ifdef VBOX_WITH_CRHGSMI
     VBOXUHGSMI_PRIVATE_D3D Uhgsmi;
-#endif
 
     /* no lock is needed for this since we're guaranteed the per-device calls are not reentrant */
     RTLISTANCHOR DirtyAllocList;
@@ -312,11 +305,6 @@ typedef struct VBOXWDDMDISP_OVERLAY
 #define VBOXDISP_CUBEMAP_INDEX_TO_FACE(pRc, idx) ((D3DCUBEMAP_FACES)(D3DCUBEMAP_FACE_POSITIVE_X+(idx)%VBOXDISP_CUBEMAP_LEVELS_COUNT(pRc)))
 #define VBOXDISP_CUBEMAP_INDEX_TO_LEVEL(pRc, idx) ((idx)%VBOXDISP_CUBEMAP_LEVELS_COUNT(pRc))
 
-#ifdef VBOX_WITH_CRHGSMI
-HRESULT vboxUhgsmiGlobalSetCurrent();
-HRESULT vboxUhgsmiGlobalClearCurrent();
-#endif
-
 DECLINLINE(PVBOXWDDMDISP_SWAPCHAIN) vboxWddmSwapchainForAlloc(PVBOXWDDMDISP_ALLOCATION pAlloc)
 {
     return pAlloc->pSwapchain;
@@ -410,7 +398,7 @@ HRESULT vboxWddmLockRect(PVBOXWDDMDISP_RESOURCE pRc, UINT iAlloc,
         DWORD fLockFlags);
 HRESULT vboxWddmUnlockRect(PVBOXWDDMDISP_RESOURCE pRc, UINT iAlloc);
 
-#define VBOXDISPMODE_IS_3D(_p) (!!((_p)->pD3D9If))
+#define VBOXDISPMODE_IS_3D(_p) (!!((_p)->D3D.pD3D9If))
 #ifdef VBOXDISP_EARLYCREATEDEVICE
 #define VBOXDISP_D3DEV(_p) (_p)->pDevice9If
 #else

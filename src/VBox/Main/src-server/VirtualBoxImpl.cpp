@@ -16,6 +16,7 @@
  */
 
 #include <iprt/asm.h>
+#include <iprt/base64.h>
 #include <iprt/buildconfig.h>
 #include <iprt/cpp/utils.h>
 #include <iprt/dir.h>
@@ -23,6 +24,8 @@
 #include <iprt/file.h>
 #include <iprt/path.h>
 #include <iprt/process.h>
+#include <iprt/rand.h>
+#include <iprt/sha.h>
 #include <iprt/string.h>
 #include <iprt/stream.h>
 #include <iprt/thread.h>
@@ -103,6 +106,12 @@ Bstr VirtualBox::sPackageType;
 
 // static
 Bstr VirtualBox::sAPIVersion;
+
+#ifdef VBOX_WITH_SYS_V_IPC_SESSION_WATCHER
+/** Table for adaptive timeouts in the client watcher. The counter starts at
+ * the maximum value and decreases to 0. */
+static const RTMSINTERVAL s_updateAdaptTimeouts[] = { 500, 200, 100, 50, 20, 10, 5 };
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -201,7 +210,8 @@ struct VirtualBox::Data
           threadClientWatcher(NIL_RTTHREAD),
           threadAsyncEvent(NIL_RTTHREAD),
           pAsyncEventQ(NULL),
-          pAutostartDb(NULL)
+          pAutostartDb(NULL),
+          fSettingsCipherKeySet(false)
     {
     }
 
@@ -278,6 +288,9 @@ struct VirtualBox::Data
 
     // the following are data for the client watcher thread
     const UPDATEREQTYPE                 updateReq;
+#ifdef VBOX_WITH_SYS_V_IPC_SESSION_WATCHER
+    uint8_t                             updateAdaptCtr;
+#endif
     const RTTHREAD                      threadClientWatcher;
     typedef std::list<RTPROCESS> ProcessList;
     ProcessList                         llProcesses;
@@ -294,7 +307,12 @@ struct VirtualBox::Data
 
     /** The global autostart database for the user. */
     AutostartDb * const                 pAutostartDb;
+
+    /** Settings secret */
+    bool                                fSettingsCipherKeySet;
+    uint8_t                             SettingsCipherKey[RTSHA512_HASH_SIZE];
 };
+
 
 // constructor / destructor
 /////////////////////////////////////////////////////////////////////////////
@@ -414,6 +432,12 @@ HRESULT VirtualBox::init()
         rc = m->pHost->loadSettings(m->pMainConfigFile->host);
         if (FAILED(rc)) throw rc;
 
+        /*
+         * Create autostart database object early, because the system properties
+         * might need it.
+         */
+        unconst(m->pAutostartDb) = new AutostartDb;
+
         /* create the system properties object, someone may need it too */
         unconst(m->pSystemProperties).createObject();
         rc = m->pSystemProperties->init(this);
@@ -445,7 +469,6 @@ HRESULT VirtualBox::init()
         /* machines */
         if (FAILED(rc = initMachines()))
             throw rc;
-
 
 #ifdef DEBUG
         LogFlowThisFunc(("Dumping media backreferences\n"));
@@ -481,8 +504,6 @@ HRESULT VirtualBox::init()
         if (FAILED(rc))
             throw rc;
 #endif
-
-        unconst(m->pAutostartDb) = new AutostartDb;
     }
     catch (HRESULT err)
     {
@@ -503,6 +524,7 @@ HRESULT VirtualBox::init()
         RTSemEventCreate(&unconst(m->updateReq));
 #elif defined(VBOX_WITH_SYS_V_IPC_SESSION_WATCHER)
         RTSemEventCreate(&unconst(m->updateReq));
+        ASMAtomicUoWriteU8(&m->updateAdaptCtr, 0);
 #else
 # error "Port me!"
 #endif
@@ -922,8 +944,7 @@ VirtualBox::COMGETTER(SystemProperties)(ISystemProperties **aSystemProperties)
 STDMETHODIMP
 VirtualBox::COMGETTER(Machines)(ComSafeArrayOut(IMachine *, aMachines))
 {
-    if (ComSafeArrayOutIsNull(aMachines))
-        return E_POINTER;
+    CheckComArgOutSafeArrayPointerValid(aMachines);
 
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
@@ -935,10 +956,62 @@ VirtualBox::COMGETTER(Machines)(ComSafeArrayOut(IMachine *, aMachines))
     return S_OK;
 }
 
+STDMETHODIMP
+VirtualBox::COMGETTER(MachineGroups)(ComSafeArrayOut(BSTR, aMachineGroups))
+{
+    CheckComArgOutSafeArrayPointerValid(aMachineGroups);
+
+    AutoCaller autoCaller(this);
+    if (FAILED(autoCaller.rc())) return autoCaller.rc();
+
+    std::list<Bstr> allGroups;
+
+    /* get copy of all machine references, to avoid holding the list lock */
+    MachinesOList::MyList allMachines;
+    {
+        AutoReadLock al(m->allMachines.getLockHandle() COMMA_LOCKVAL_SRC_POS);
+        allMachines = m->allMachines.getList();
+    }
+    for (MachinesOList::MyList::const_iterator it = allMachines.begin();
+         it != allMachines.end();
+         ++it)
+    {
+        const ComObjPtr<Machine> &pMachine = *it;
+        AutoCaller autoMachineCaller(pMachine);
+        if (FAILED(autoMachineCaller.rc()))
+            continue;
+        AutoReadLock mlock(pMachine COMMA_LOCKVAL_SRC_POS);
+
+        if (pMachine->isAccessible())
+        {
+            const StringsList &thisGroups = pMachine->getGroups();
+            for (StringsList::const_iterator it2 = thisGroups.begin();
+                 it2 != thisGroups.end();
+                 ++it2)
+                allGroups.push_back(*it2);
+        }
+    }
+
+    /* throw out any duplicates */
+    allGroups.sort();
+    allGroups.unique();
+    com::SafeArray<BSTR> machineGroups(allGroups.size());
+    size_t i = 0;
+    for (std::list<Bstr>::const_iterator it = allGroups.begin();
+         it != allGroups.end();
+         ++it, i++)
+    {
+        const Bstr &tmp = *it;
+        tmp.cloneTo(&machineGroups[i]);
+    }
+    machineGroups.detachTo(ComSafeArrayOutArg(aMachineGroups));
+
+    return S_OK;
+}
+
 STDMETHODIMP VirtualBox::COMGETTER(HardDisks)(ComSafeArrayOut(IMedium *, aHardDisks))
 {
-    if (ComSafeArrayOutIsNull(aHardDisks))
-        return E_POINTER;
+    CheckComArgOutSafeArrayPointerValid(aHardDisks);
 
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
@@ -952,8 +1025,7 @@ STDMETHODIMP VirtualBox::COMGETTER(HardDisks)(ComSafeArrayOut(IMedium *, aHardDi
 
 STDMETHODIMP VirtualBox::COMGETTER(DVDImages)(ComSafeArrayOut(IMedium *, aDVDImages))
 {
-    if (ComSafeArrayOutIsNull(aDVDImages))
-        return E_POINTER;
+    CheckComArgOutSafeArrayPointerValid(aDVDImages);
 
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
@@ -967,8 +1039,7 @@ STDMETHODIMP VirtualBox::COMGETTER(DVDImages)(ComSafeArrayOut(IMedium *, aDVDIma
 
 STDMETHODIMP VirtualBox::COMGETTER(FloppyImages)(ComSafeArrayOut(IMedium *, aFloppyImages))
 {
-    if (ComSafeArrayOutIsNull(aFloppyImages))
-        return E_POINTER;
+    CheckComArgOutSafeArrayPointerValid(aFloppyImages);
 
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
@@ -1044,8 +1115,7 @@ VirtualBox::COMGETTER(PerformanceCollector)(IPerformanceCollector **aPerformance
 STDMETHODIMP
 VirtualBox::COMGETTER(DHCPServers)(ComSafeArrayOut(IDHCPServer *, aDHCPServers))
 {
-    if (ComSafeArrayOutIsNull(aDHCPServers))
-        return E_POINTER;
+    CheckComArgOutSafeArrayPointerValid(aDHCPServers);
 
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
@@ -1093,8 +1163,7 @@ VirtualBox::COMGETTER(ExtensionPackManager)(IExtPackManager **aExtPackManager)
 
 STDMETHODIMP VirtualBox::COMGETTER(InternalNetworks)(ComSafeArrayOut(BSTR, aInternalNetworks))
 {
-    if (ComSafeArrayOutIsNull(aInternalNetworks))
-        return E_POINTER;
+    CheckComArgOutSafeArrayPointerValid(aInternalNetworks);
 
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
@@ -1155,8 +1224,7 @@ STDMETHODIMP VirtualBox::COMGETTER(InternalNetworks)(ComSafeArrayOut(BSTR, aInte
 
 STDMETHODIMP VirtualBox::COMGETTER(GenericNetworkDrivers)(ComSafeArrayOut(BSTR, aGenericNetworkDrivers))
 {
-    if (ComSafeArrayOutIsNull(aGenericNetworkDrivers))
-        return E_POINTER;
+    CheckComArgOutSafeArrayPointerValid(aGenericNetworkDrivers);
 
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
@@ -1315,6 +1383,7 @@ VirtualBox::CheckFirmwarePresent(FirmwareType_T aFirmwareType,
 static void sanitiseMachineFilename(Utf8Str &aName);
 
 STDMETHODIMP VirtualBox::ComposeMachineFilename(IN_BSTR aName,
+                                                IN_BSTR aGroup,
                                                 IN_BSTR aBaseFolder,
                                                 BSTR *aFilename)
 {
@@ -1327,9 +1396,16 @@ STDMETHODIMP VirtualBox::ComposeMachineFilename(IN_BSTR aName,
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
+    Utf8Str strGroup(aGroup);
+    if (strGroup.isEmpty())
+        strGroup = "/";
+    HRESULT rc = validateMachineGroup(strGroup);
+    if (FAILED(rc))
+        return rc;
+
     /* Compose the settings file name using the following scheme:
      *
-     *     <base_folder>/<machine_name>/<machine_name>.xml
+     *     <base_folder><group>/<machine_name>/<machine_name>.xml
      *
      * If a non-null and non-empty base folder is specified, the default
      * machine folder will be used as a base folder.
@@ -1346,22 +1422,16 @@ STDMETHODIMP VirtualBox::ComposeMachineFilename(IN_BSTR aName,
 
     calculateFullPath(strBase, strBase);
 
-    Bstr bstrSettingsFile = BstrFmt("%s%c%s%c%s.vbox",
+    /* eliminate toplevel group to avoid // in the result */
+    if (strGroup == "/")
+        strGroup.setNull();
+    Bstr bstrSettingsFile = BstrFmt("%s%s%c%s%c%s.vbox",
                                     strBase.c_str(),
+                                    strGroup.c_str(),
                                     RTPATH_DELIMITER,
                                     strName.c_str(),
                                     RTPATH_DELIMITER,
                                     strName.c_str());
-
-#if 0  /* Try to get a unique name. */
-    for (unsigned i = 1; RTFileExists(bstrSettingsFile.c_str() && i < 100; ++i)
-        bstrSettingsFile = BstrFmt("%s%c%s%u%c%s%u.vbox",
-                                   strBase.c_str(),
-                                   RTPATH_DELIMITER,
-                                   strName.c_str(), i,
-                                   RTPATH_DELIMITER,
-                                   strName.c_str());
-#endif
 
     bstrSettingsFile.detachTo(aFilename);
 
@@ -1457,6 +1527,7 @@ namespace
 /** @note Locks mSystemProperties object for reading. */
 STDMETHODIMP VirtualBox::CreateMachine(IN_BSTR aSettingsFile,
                                        IN_BSTR aName,
+                                       ComSafeArrayIn(IN_BSTR, aGroups),
                                        IN_BSTR aOsTypeId,
                                        IN_BSTR aId,
                                        BOOL forceOverwrite,
@@ -1472,13 +1543,18 @@ STDMETHODIMP VirtualBox::CreateMachine(IN_BSTR aSettingsFile,
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
+    StringsList llGroups;
+    HRESULT rc = convertMachineGroups(ComSafeArrayInArg(aGroups), &llGroups);
+    if (FAILED(rc))
+        return rc;
+
     /* NULL settings file means compose automatically */
-    HRESULT rc;
     Bstr bstrSettingsFile(aSettingsFile);
     if (bstrSettingsFile.isEmpty())
     {
         rc = ComposeMachineFilename(aName,
-                                    NULL,
+                                    Bstr(llGroups.front()).raw(),
+                                    NULL /* aBaseFolder */,
                                     bstrSettingsFile.asOutParam());
         if (FAILED(rc)) return rc;
     }
@@ -1501,6 +1577,7 @@ STDMETHODIMP VirtualBox::CreateMachine(IN_BSTR aSettingsFile,
     rc = machine->init(this,
                        Utf8Str(bstrSettingsFile),
                        Utf8Str(aName),
+                       llGroups,
                        osType,
                        id,
                        !!forceOverwrite);
@@ -1642,6 +1719,76 @@ STDMETHODIMP VirtualBox::FindMachine(IN_BSTR aNameOrId, IMachine **aMachine)
     LogFlowThisFuncLeave();
 
     return rc;
+}
+
+STDMETHODIMP VirtualBox::GetMachinesByGroups(ComSafeArrayIn(IN_BSTR, aGroups), ComSafeArrayOut(IMachine *, aMachines))
+{
+    CheckComArgSafeArrayNotNull(aGroups);
+    CheckComArgOutSafeArrayPointerValid(aMachines);
+
+    AutoCaller autoCaller(this);
+    if (FAILED(autoCaller.rc())) return autoCaller.rc();
+
+    StringsList llGroups;
+    HRESULT rc = convertMachineGroups(ComSafeArrayInArg(aGroups), &llGroups);
+    if (FAILED(rc))
+        return rc;
+    /* we want to rely on sorted groups during compare, to save time */
+    llGroups.sort();
+
+    /* get copy of all machine references, to avoid holding the list lock */
+    MachinesOList::MyList allMachines;
+    {
+        AutoReadLock al(m->allMachines.getLockHandle() COMMA_LOCKVAL_SRC_POS);
+        allMachines = m->allMachines.getList();
+    }
+
+    com::SafeIfaceArray<IMachine> saMachines;
+    for (MachinesOList::MyList::const_iterator it = allMachines.begin();
+         it != allMachines.end();
+         ++it)
+    {
+        const ComObjPtr<Machine> &pMachine = *it;
+        AutoCaller autoMachineCaller(pMachine);
+        if (FAILED(autoMachineCaller.rc()))
+            continue;
+        AutoReadLock mlock(pMachine COMMA_LOCKVAL_SRC_POS);
+
+        if (pMachine->isAccessible())
+        {
+            const StringsList &thisGroups = pMachine->getGroups();
+            for (StringsList::const_iterator it2 = thisGroups.begin();
+                 it2 != thisGroups.end();
+                 ++it2)
+            {
+                const Utf8Str &group = *it2;
+                bool fAppended = false;
+                for (StringsList::const_iterator it3 = llGroups.begin();
+                     it3 != llGroups.end();
+                     ++it3)
+                {
+                    int order = it3->compare(group);
+                    if (order == 0)
+                    {
+                        saMachines.push_back(pMachine);
+                        fAppended = true;
+                        break;
+                    }
+                    else if (order > 0)
+                        break;
+                    else
+                        continue;
+                }
+                /* avoid duplicates and save time */
+                if (fAppended)
+                    break;
+            }
+        }
+    }
+
+    saMachines.detachTo(ComSafeArrayOutArg(aMachines));
+
+    return S_OK;
 }
 
 STDMETHODIMP VirtualBox::GetMachineStates(ComSafeArrayIn(IMachine *, aMachines), ComSafeArrayOut(MachineState_T, aStates))
@@ -1842,8 +1989,7 @@ STDMETHODIMP VirtualBox::GetExtraDataKeys(ComSafeArrayOut(BSTR, aKeys))
 {
     using namespace settings;
 
-    if (ComSafeArrayOutIsNull(aKeys))
-        return E_POINTER;
+    CheckComArgOutSafeArrayPointerValid(aKeys);
 
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
@@ -1964,6 +2110,220 @@ STDMETHODIMP VirtualBox::SetExtraData(IN_BSTR aKey,
         onExtraDataChange(Guid::Empty, aKey, aValue);
 
     return S_OK;
+}
+
+/**
+ *
+ */
+STDMETHODIMP VirtualBox::SetSettingsSecret(IN_BSTR aValue)
+{
+    storeSettingsKey(aValue);
+    decryptSettings();
+    return S_OK;
+}
+
+int VirtualBox::decryptMediumSettings(Medium *pMedium)
+{
+    Bstr bstrCipher;
+    HRESULT hrc = pMedium->GetProperty(Bstr("InitiatorSecretEncrypted").raw(),
+                                       bstrCipher.asOutParam());
+    if (SUCCEEDED(hrc))
+    {
+        Utf8Str strPlaintext;
+        int rc = decryptSetting(&strPlaintext, bstrCipher);
+        if (RT_SUCCESS(rc))
+            pMedium->setPropertyDirect("InitiatorSecret", strPlaintext);
+        else
+            return rc;
+    }
+    return VINF_SUCCESS;
+}
+
+/**
+ * Decrypt all encrypted settings.
+ *
+ * So far we only have encrypted iSCSI initiator secrets so we just go through
+ * all hard disk mediums and determine the plain 'InitiatorSecret' from
+ * 'InitiatorSecretEncrypted. The latter is stored as Base64 because medium
+ * properties need to be null-terminated strings.
+ */
+int VirtualBox::decryptSettings()
+{
+    bool fFailure = false;
+    AutoReadLock al(m->allHardDisks.getLockHandle() COMMA_LOCKVAL_SRC_POS);
+    for (MediaList::const_iterator mt = m->allHardDisks.begin();
+         mt != m->allHardDisks.end();
+         ++mt)
+    {
+        ComObjPtr<Medium> pMedium = *mt;
+        AutoCaller medCaller(pMedium);
+        if (FAILED(medCaller.rc()))
+            continue;
+        AutoWriteLock mlock(pMedium COMMA_LOCKVAL_SRC_POS);
+        int vrc = decryptMediumSettings(pMedium);
+        if (RT_FAILURE(vrc))
+            fFailure = true;
+    }
+    return fFailure ? VERR_INVALID_PARAMETER : VINF_SUCCESS;
+}
+
+/**
+ * Encode.
+ *
+ * @param aPlaintext      plaintext to be encrypted
+ * @param aCiphertext     resulting ciphertext (base64-encoded)
+ */
+int VirtualBox::encryptSetting(const Utf8Str &aPlaintext, Utf8Str *aCiphertext)
+{
+    uint8_t abCiphertext[32];
+    char    szCipherBase64[128];
+    size_t  cchCipherBase64;
+    int rc = encryptSettingBytes((uint8_t*)aPlaintext.c_str(), abCiphertext,
+                                 aPlaintext.length()+1, sizeof(abCiphertext));
+    if (RT_SUCCESS(rc))
+    {
+        rc = RTBase64Encode(abCiphertext, sizeof(abCiphertext),
+                            szCipherBase64, sizeof(szCipherBase64),
+                            &cchCipherBase64);
+        if (RT_SUCCESS(rc))
+            *aCiphertext = szCipherBase64;
+    }
+    return rc;
+}
+
+/**
+ * Decode.
+ *
+ * @param aPlaintext      resulting plaintext
+ * @param aCiphertext     ciphertext (base64-encoded) to decrypt
+ */
+int VirtualBox::decryptSetting(Utf8Str *aPlaintext, const Utf8Str &aCiphertext)
+{
+    uint8_t abPlaintext[64];
+    uint8_t abCiphertext[64];
+    size_t  cbCiphertext;
+    int rc = RTBase64Decode(aCiphertext.c_str(),
+                            abCiphertext, sizeof(abCiphertext),
+                            &cbCiphertext, NULL);
+    if (RT_SUCCESS(rc))
+    {
+        rc = decryptSettingBytes(abPlaintext, abCiphertext, cbCiphertext);
+        if (RT_SUCCESS(rc))
+        {
+            for (unsigned i = 0; i < cbCiphertext; i++)
+            {
+                /* sanity check: null-terminated string? */
+                if (abPlaintext[i] == '\0')
+                {
+                    /* sanity check: valid UTF8 string? */
+                    if (RTStrIsValidEncoding((const char*)abPlaintext))
+                    {
+                        *aPlaintext = Utf8Str((const char*)abPlaintext);
+                        return VINF_SUCCESS;
+                    }
+                }
+            }
+            rc = VERR_INVALID_MAGIC;
+        }
+    }
+    return rc;
+}
+
+/**
+ * Encrypt secret bytes. Use the m->SettingsCipherKey as key.
+ *
+ * @param aPlaintext      clear text to be encrypted
+ * @param aCiphertext     resulting encrypted text
+ * @param aPlaintextSize  size of the plaintext
+ * @param aCiphertextSize size of the ciphertext
+ */
+int VirtualBox::encryptSettingBytes(const uint8_t *aPlaintext, uint8_t *aCiphertext,
+                                    size_t aPlaintextSize, size_t aCiphertextSize) const
+{
+    unsigned i, j;
+    uint8_t aBytes[64];
+
+    if (!m->fSettingsCipherKeySet)
+        return VERR_INVALID_STATE;
+
+    if (aCiphertextSize > sizeof(aBytes))
+        return VERR_BUFFER_OVERFLOW;
+
+    if (aCiphertextSize < 32)
+        return VERR_INVALID_PARAMETER;
+
+    AssertCompile(sizeof(m->SettingsCipherKey) >= 32);
+
+    /* store the first 8 bytes of the cipherkey for verification */
+    for (i = 0, j = 0; i < 8; i++, j++)
+        aCiphertext[i] = m->SettingsCipherKey[j];
+
+    for (unsigned k = 0; k < aPlaintextSize && i < aCiphertextSize; i++, k++)
+    {
+        aCiphertext[i] = (aPlaintext[k] ^ m->SettingsCipherKey[j]);
+        if (++j >= sizeof(m->SettingsCipherKey))
+            j = 0;
+    }
+
+    /* fill with random data to have a minimal length (salt) */
+    if (i < aCiphertextSize)
+    {
+        RTRandBytes(aBytes, aCiphertextSize - i);
+        for (int k = 0; i < aCiphertextSize; i++, k++)
+        {
+            aCiphertext[i] = aBytes[k] ^ m->SettingsCipherKey[j];
+            if (++j >= sizeof(m->SettingsCipherKey))
+                j = 0;
+        }
+    }
+
+    return VINF_SUCCESS;
+}
+
+/**
+ * Decrypt secret bytes. Use the m->SettingsCipherKey as key.
+ *
+ * @param aPlaintext      resulting plaintext
+ * @param aCiphertext     ciphertext to be decrypted
+ * @param aCiphertextSize size of the ciphertext == size of the plaintext
+ */
+int VirtualBox::decryptSettingBytes(uint8_t *aPlaintext,
+                                    const uint8_t *aCiphertext, size_t aCiphertextSize) const
+{
+    unsigned i, j;
+
+    if (!m->fSettingsCipherKeySet)
+        return VERR_INVALID_STATE;
+
+    if (aCiphertextSize < 32)
+        return VERR_INVALID_PARAMETER;
+
+    /* key verification */
+    for (i = 0, j = 0; i < 8; i++, j++)
+        if (aCiphertext[i] != m->SettingsCipherKey[j])
+            return VERR_INVALID_MAGIC;
+
+    /* poison */
+    memset(aPlaintext, 0xff, aCiphertextSize);
+    for (int k = 0; i < aCiphertextSize; i++, k++)
+    {
+        aPlaintext[k] = aCiphertext[i] ^ m->SettingsCipherKey[j];
+        if (++j >= sizeof(m->SettingsCipherKey))
+            j = 0;
+    }
+
+    return VINF_SUCCESS;
+}
+
+/**
+ * Store a settings key.
+ *
+ * @param aKey          the key to store
+ */
+void VirtualBox::storeSettingsKey(const Utf8Str &aKey)
+{
+    RTSha512(aKey.c_str(), aKey.length(), m->SettingsCipherKey);
+    m->fSettingsCipherKeySet = true;
 }
 
 // public methods only for internal purposes
@@ -2344,6 +2704,7 @@ void VirtualBox::updateClientWatcher()
 #elif defined(RT_OS_OS2)
     RTSemEventSignal(m->updateReq);
 #elif defined(VBOX_WITH_SYS_V_IPC_SESSION_WATCHER)
+    ASMAtomicUoWriteU8(&m->updateAdaptCtr, RT_ELEMENTS(s_updateAdaptTimeouts) - 1);
     RTSemEventSignal(m->updateReq);
 #else
 # error "Port me!"
@@ -2771,6 +3132,112 @@ HRESULT VirtualBox::findMachine(const Guid &aId,
                       aId.raw());
 
     return rc;
+}
+
+static HRESULT validateMachineGroupHelper(const Utf8Str &aGroup)
+{
+    /* empty strings are invalid */
+    if (aGroup.isEmpty())
+        return E_INVALIDARG;
+    /* the toplevel group is valid */
+    if (aGroup == "/")
+        return S_OK;
+    /* any other strings of length 1 are invalid */
+    if (aGroup.length() == 1)
+        return E_INVALIDARG;
+    /* must start with a slash */
+    if (aGroup.c_str()[0] != '/')
+        return E_INVALIDARG;
+    /* must not end with a slash */
+    if (aGroup.c_str()[aGroup.length() - 1] == '/')
+        return E_INVALIDARG;
+    /* check the group components */
+    const char *pStr = aGroup.c_str() + 1;  /* first char is /, skip it */
+    while (pStr)
+    {
+        char *pSlash = RTStrStr(pStr, "/");
+        if (pSlash)
+        {
+            /* no empty components (or // sequences in other words) */
+            if (pSlash == pStr)
+                return E_INVALIDARG;
+            /* check if the machine name rules are violated, because that means
+             * the group components is too close to the limits. */
+            Utf8Str tmp((const char *)pStr, (size_t)(pSlash - pStr));
+            Utf8Str tmp2(tmp);
+            sanitiseMachineFilename(tmp);
+            if (tmp != tmp2)
+                return E_INVALIDARG;
+            pStr = pSlash + 1;
+        }
+        else
+        {
+            /* check if the machine name rules are violated, because that means
+             * the group components is too close to the limits. */
+            Utf8Str tmp(pStr);
+            Utf8Str tmp2(tmp);
+            sanitiseMachineFilename(tmp);
+            if (tmp != tmp2)
+                return E_INVALIDARG;
+            pStr = NULL;
+        }
+    }
+    return S_OK;
+}
+
+/**
+ * Validates a machine group.
+ *
+ * @param aMachineGroup     Machine group.
+ *
+ * @return S_OK or E_INVALIDARG
+ */
+HRESULT VirtualBox::validateMachineGroup(const Utf8Str &aGroup)
+{
+    HRESULT rc = validateMachineGroupHelper(aGroup);
+    if (FAILED(rc))
+        rc = setError(rc,
+                      tr("Invalid machine group '%s'"),
+                      aGroup.c_str());
+    return rc;
+}
+
+/**
+ * Takes a list of machine groups, and sanitizes/validates it.
+ *
+ * @param aMachineGroups    Safearray with the machine groups.
+ * @param pllMachineGroups  Pointer to list of strings for the result.
+ *
+ * @return S_OK or E_INVALIDARG
+ */
+HRESULT VirtualBox::convertMachineGroups(ComSafeArrayIn(IN_BSTR, aMachineGroups), StringsList *pllMachineGroups)
+{
+    pllMachineGroups->clear();
+    if (aMachineGroups)
+    {
+        com::SafeArray<IN_BSTR> machineGroups(ComSafeArrayInArg(aMachineGroups));
+        for (size_t i = 0; i < machineGroups.size(); i++)
+        {
+            Utf8Str group(machineGroups[i]);
+            if (group.length() == 0)
+                group = "/";
+
+            HRESULT rc = validateMachineGroup(group);
+            if (FAILED(rc))
+                return rc;
+
+            /* no duplicates please */
+            if (   find(pllMachineGroups->begin(), pllMachineGroups->end(), group)
+                == pllMachineGroups->end())
+                pllMachineGroups->push_back(group);
+        }
+        if (pllMachineGroups->size() == 0)
+            pllMachineGroups->push_back("/");
+    }
+    else
+        pllMachineGroups->push_back("/");
+
+    return S_OK;
 }
 
 /**
@@ -3997,6 +4464,7 @@ void VirtualBox::saveModifiedRegistries()
         AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
         rc = saveSettings();
     }
+    NOREF(rc); /* XXX */
 }
 
 /**
@@ -4420,7 +4888,24 @@ DECLCALLBACK(int) VirtualBox::ClientWatcher(RTTHREAD /* thread */, void *pvUser)
             /* release the caller to let uninit() ever proceed */
             autoCaller.release();
 
-            int rc = RTSemEventWait(that->m->updateReq, 500);
+            /* determine wait timeout adaptively: after updating information
+             * relevant to the client watcher, check a few times more
+             * frequently. This ensures good reaction time when the signalling
+             * has to be done a bit before the actual change for technical
+             * reasons, and saves CPU cycles when no activities are expected. */
+            RTMSINTERVAL cMillies;
+            {
+                uint8_t uOld, uNew;
+                do
+                {
+                    uOld = ASMAtomicUoReadU8(&that->m->updateAdaptCtr);
+                    uNew = uOld ? uOld - 1 : uOld;
+                } while (!ASMAtomicCmpXchgU8(&that->m->updateAdaptCtr, uNew, uOld));
+                Assert(uOld <= RT_ELEMENTS(s_updateAdaptTimeouts) - 1);
+                cMillies = s_updateAdaptTimeouts[uOld];
+            }
+
+            int rc = RTSemEventWait(that->m->updateReq, cMillies);
 
             /*
              *  Restore the caller before using VirtualBox. If it fails, this

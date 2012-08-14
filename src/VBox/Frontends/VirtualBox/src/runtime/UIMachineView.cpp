@@ -150,6 +150,26 @@ UIMachineView* UIMachineView::create(  UIMachineWindow *pMachineWindow
         default:
             break;
     }
+
+    /* Prepare common things: */
+    pMachineView->prepareCommon();
+
+    /* Prepare event-filters: */
+    pMachineView->prepareFilters();
+
+    /* Prepare connections: */
+    pMachineView->prepareConnections();
+
+    /* Prepare console connections: */
+    pMachineView->prepareConsoleConnections();
+
+    /* Initialization: */
+    pMachineView->sltMachineStateChanged();
+    /** @todo Can we move the call to sltAdditionsStateChanged() from the
+     * subclass constructors here too?  It is called for Normal and Seamless,
+     * but not for Fullscreen and Scale.  However for Scale it is a no op.,
+     * so it would not hurt.  Would it hurt for Fullscreen? */
+
     return pMachineView;
 }
 
@@ -175,11 +195,16 @@ void UIMachineView::sltPerformGuestResize(const QSize &toSize)
     AssertMsg(newSize.isValid(), ("Size should be valid!\n"));
 
     /* Send new size-hint to the guest: */
-    session().GetConsole().GetDisplay().SetVideoModeHint(newSize.width(), newSize.height(), 0, screenId());
+    session().GetConsole().GetDisplay().SetVideoModeHint(screenId(), true, false, 0, 0, newSize.width(), newSize.height(), 0);
     /* And track whether we have had a "normal" resize since the last
      * fullscreen resize hint was sent: */
     QString strKey = makeExtraDataKeyPerMonitor(GUI_LastGuestSizeHintWasFullscreen);
     machine.SetExtraData(strKey, isFullscreenOrSeamless() ? "true" : "");
+}
+
+void UIMachineView::sltDesktopResized()
+{
+    setMaxGuestSize();
 }
 
 void UIMachineView::sltMachineStateChanged()
@@ -256,6 +281,14 @@ UIMachineView::UIMachineView(  UIMachineWindow *pMachineWindow
     , m_fAccelerate2DVideo(bAccelerate2DVideo)
 #endif /* VBOX_WITH_VIDEOHWACCEL */
 {
+    /* Load machine view settings: */
+    loadMachineViewSettings();
+
+    /* Prepare viewport: */
+    prepareViewport();
+
+    /* Prepare frame buffer: */
+    prepareFrameBuffer();
 }
 
 UIMachineView::~UIMachineView()
@@ -491,6 +524,13 @@ void UIMachineView::prepareFilters()
 
     /* We want to be notified on some parent's events: */
     machineWindow()->installEventFilter(this);
+}
+
+void UIMachineView::prepareConnections()
+{
+    /* Desktop resolution change (e.g. monitor hotplug): */
+    connect(QApplication::desktop(), SIGNAL(resized(int)), this,
+            SLOT(sltDesktopResized()));
 }
 
 void UIMachineView::prepareConsoleConnections()

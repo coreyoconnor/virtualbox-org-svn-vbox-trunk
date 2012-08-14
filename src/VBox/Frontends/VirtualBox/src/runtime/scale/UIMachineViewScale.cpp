@@ -52,26 +52,6 @@ UIMachineViewScale::UIMachineViewScale(  UIMachineWindow *pMachineWindow
                     )
     , m_pPauseImage(0)
 {
-    /* Load machine view settings: */
-    loadMachineViewSettings();
-
-    /* Prepare viewport: */
-    prepareViewport();
-
-    /* Prepare frame buffer: */
-    prepareFrameBuffer();
-
-    /* Prepare common things: */
-    prepareCommon();
-
-    /* Prepare event-filters: */
-    prepareFilters();
-
-    /* Prepare console connections: */
-    prepareConsoleConnections();
-
-    /* Initialization: */
-    sltMachineStateChanged();
 }
 
 UIMachineViewScale::~UIMachineViewScale()

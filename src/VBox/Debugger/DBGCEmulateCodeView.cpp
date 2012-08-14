@@ -957,7 +957,7 @@ static DECLCALLBACK(int) dbgcCmdUnassemble(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, 
             /** @todo Batch query CS, RIP & CPU mode. */
             PVMCPU pVCpu = VMMGetCpuById(pVM, pDbgc->idCpu);
             if (    pDbgc->fRegCtxGuest
-                &&  CPUMIsGuestIn64BitCodeEx(CPUMQueryGuestCtxPtr(pVCpu)))
+                &&  CPUMIsGuestIn64BitCode(pVCpu))
             {
                 pDbgc->DisasmPos.enmType    = DBGCVAR_TYPE_GC_FLAT;
                 pDbgc->SourcePos.u.GCFlat   = CPUMGetGuestRIP(pVCpu);
@@ -1427,7 +1427,7 @@ static DECLCALLBACK(int) dbgcCmdRegGuest(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PV
         PDBGC       pDbgc      = DBGC_CMDHLP2DBGC(pCmdHlp);
         bool const  f64BitMode = !strcmp(pCmd->pszCmd, "rg64")
                               || (   !strcmp(pCmd->pszCmd, "rg32")
-                                  && CPUMIsGuestIn64BitCodeEx(CPUMQueryGuestCtxPtr(VMMGetCpuById(pVM, pDbgc->idCpu))));
+                                  && CPUMIsGuestIn64BitCode(VMMGetCpuById(pVM, pDbgc->idCpu)));
         char        szDisAndRegs[8192];
         int         rc;
 
@@ -1757,10 +1757,8 @@ static int dbgcCmdDumpDTWorker64(PDBGCCMDHLP pCmdHlp, PCX86DESC64 pDesc, unsigne
         const char *pszAccessed = pDesc->Gen.u4Type & RT_BIT(0) ? "A " : "NA";
         const char *pszGranularity = pDesc->Gen.u1Granularity ? "G" : " ";
         const char *pszBig = pDesc->Gen.u1DefBig ? "BIG" : "   ";
-        uint32_t u32Base = X86DESC_BASE(*pDesc);
-        uint32_t cbLimit = X86DESC_LIMIT(*pDesc);
-        if (pDesc->Gen.u1Granularity)
-            cbLimit <<= PAGE_SHIFT;
+        uint32_t u32Base = X86DESC_BASE(pDesc);
+        uint32_t cbLimit = X86DESC_LIMIT_G(pDesc);
 
         rc = pCmdHlp->pfnPrintf(pCmdHlp, NULL, "%04x %s Bas=%08x Lim=%08x DPL=%d %s %s %s %s AVL=%d L=%d%s\n",
                                 iEntry, s_apszTypes[pDesc->Gen.u4Type], u32Base, cbLimit,
@@ -1814,8 +1812,8 @@ static int dbgcCmdDumpDTWorker64(PDBGCCMDHLP pCmdHlp, PCX86DESC64 pDesc, unsigne
                 const char *pszBig         = pDesc->Gen.u1DefBig ? "BIG" : "   ";
                 const char *pszLong        = pDesc->Gen.u1Long ? "LONG" : "   ";
 
-                uint64_t u32Base = X86DESC64_BASE(*pDesc);
-                uint32_t cbLimit = X86DESC_LIMIT(*pDesc);
+                uint64_t u32Base = X86DESC64_BASE(pDesc);
+                uint32_t cbLimit = X86DESC_LIMIT_G(pDesc);
 
                 rc = pCmdHlp->pfnPrintf(pCmdHlp, NULL, "%04x %s Bas=%016RX64 Lim=%08x DPL=%d %s %s %s %sAVL=%d R=%d%s\n",
                                         iEntry, s_apszTypes[pDesc->Gen.u4Type], u32Base, cbLimit,

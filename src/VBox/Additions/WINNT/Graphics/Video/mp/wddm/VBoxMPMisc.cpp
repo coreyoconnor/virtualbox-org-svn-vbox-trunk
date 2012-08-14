@@ -472,7 +472,7 @@ NTSTATUS vboxWddmSwapchainCtxEscape(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_CONTEXT pC
         }
         else if (pSwapchainInfo->SwapchainInfo.cAllocs)
         {
-            pSwapchain = vboxWddmSwapchainCreate(apAlloc[0]->SurfDesc.width, apAlloc[0]->SurfDesc.height);
+            pSwapchain = vboxWddmSwapchainCreate(apAlloc[0]->AllocData.SurfDesc.width, apAlloc[0]->AllocData.SurfDesc.height);
             if (!pSwapchain)
             {
                 Status = STATUS_NO_MEMORY;
@@ -679,7 +679,7 @@ NTSTATUS vboxWddmRegQueryVideoGuidString(ULONG cbBuf, PWCHAR pBuf, PULONG pcbRes
                 struct
                 {
                     KEY_VALUE_PARTIAL_INFORMATION Info;
-                    UCHAR Buf[sizeof (L"VBoxVideoWddm")]; /* should be enough */
+                    UCHAR Buf[sizeof (VBOX_WDDM_DRIVERNAME)]; /* should be enough */
                 } KeyData;
                 ULONG cbResult;
                 UNICODE_STRING RtlStr;
@@ -695,9 +695,9 @@ NTSTATUS vboxWddmRegQueryVideoGuidString(ULONG cbBuf, PWCHAR pBuf, PULONG pcbRes
                 {
                     if (KeyData.Info.Type == REG_SZ)
                     {
-                        if (KeyData.Info.DataLength == sizeof (L"VBoxVideoWddm"))
+                        if (KeyData.Info.DataLength == sizeof (VBOX_WDDM_DRIVERNAME))
                         {
-                            if (!wcscmp(L"VBoxVideoWddm", (PWCHAR)KeyData.Info.Data))
+                            if (!wcscmp(VBOX_WDDM_DRIVERNAME, (PWCHAR)KeyData.Info.Data))
                             {
                                 bFound = TRUE;
                                 *pcbResult = Buf.Name.NameLength + 2;
@@ -809,6 +809,7 @@ NTSTATUS vboxWddmDisplaySettingsQueryPos(IN PVBOXMP_DEVEXT pDeviceExtension, D3D
         NTSTATUS tmpStatus = ZwClose(hKey);
         Assert(tmpStatus == STATUS_SUCCESS);
     }
+
     return Status;
 }
 
@@ -2583,14 +2584,14 @@ static VOID vboxWddmSlVSyncDpc(
         PVBOXWDDM_ALLOCATION pPrimary = vboxWddmAquirePrimary(pDevExt, pSource, i);
         if (pPrimary)
         {
-            VBOXVIDEOOFFSET offVram = pPrimary->offVram;
+            VBOXVIDEOOFFSET offVram = pPrimary->AllocData.Addr.offVram;
             if (offVram != VBOXVIDEOOFFSET_VOID)
             {
                 memset(&notify, 0, sizeof(DXGKARGCB_NOTIFY_INTERRUPT_DATA));
                 notify.InterruptType = DXGK_INTERRUPT_CRTC_VSYNC;
                 /* @todo: !!!this is not correct in case we want source[i]->target[i!=j] mapping */
                 notify.CrtcVsync.VidPnTargetId = i;
-                notify.CrtcVsync.PhysicalAddress.QuadPart = pPrimary->offVram;
+                notify.CrtcVsync.PhysicalAddress.QuadPart = offVram;
                 /* yes, we can report VSync at dispatch */
                 pDevExt->u.primary.DxgkInterface.DxgkCbNotifyInterrupt(pDevExt->u.primary.DxgkInterface.DeviceHandle, &notify);
                 bNeedDpc = TRUE;
@@ -2625,3 +2626,57 @@ NTSTATUS VBoxWddmSlTerm(PVBOXMP_DEVEXT pDevExt)
     KeCancelTimer(&pDevExt->VSyncTimer);
     return STATUS_SUCCESS;
 }
+
+#ifdef VBOX_WDDM_WIN8
+void vboxWddmDiInitDefault(DXGK_DISPLAY_INFORMATION *pInfo, PHYSICAL_ADDRESS PhAddr, D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId)
+{
+    pInfo->Width = 1024;
+    pInfo->Height = 768;
+    pInfo->Pitch = pInfo->Width * 4;
+    pInfo->ColorFormat = D3DDDIFMT_A8R8G8B8;
+    pInfo->PhysicAddress = PhAddr;
+    pInfo->TargetId = VidPnSourceId;
+    pInfo->AcpiId = 0;
+}
+
+void vboxWddmDiToAllocData(PVBOXMP_DEVEXT pDevExt, const DXGK_DISPLAY_INFORMATION *pInfo, PVBOXWDDM_ALLOC_DATA pAllocData)
+{
+    pAllocData->SurfDesc.width = pInfo->Width;
+    pAllocData->SurfDesc.height = pInfo->Height;
+    pAllocData->SurfDesc.format = pInfo->ColorFormat;
+    pAllocData->SurfDesc.bpp = vboxWddmCalcBitsPerPixel(pInfo->ColorFormat);
+    pAllocData->SurfDesc.pitch = pInfo->Pitch;
+    pAllocData->SurfDesc.depth = 1;
+    pAllocData->SurfDesc.slicePitch = pInfo->Pitch;
+    pAllocData->SurfDesc.cbSize = pInfo->Pitch * pInfo->Height;
+    pAllocData->SurfDesc.VidPnSourceId = pInfo->TargetId;
+    pAllocData->SurfDesc.RefreshRate.Numerator = 60000;
+    pAllocData->SurfDesc.RefreshRate.Denominator = 1000;
+
+    /* the address here is not a VRAM offset! so convert it to offset */
+    vboxWddmAddrSetVram(&pAllocData->Addr, 1,
+            vboxWddmVramAddrToOffset(pDevExt, pInfo->PhysicAddress));
+}
+
+void vboxWddmDmAdjustDefaultVramLocations(PVBOXMP_DEVEXT pDevExt, D3DDDI_VIDEO_PRESENT_SOURCE_ID ModifiedVidPnSourceId)
+{
+    PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[ModifiedVidPnSourceId];
+    PHYSICAL_ADDRESS PhAddr;
+    AssertRelease(pSource->AllocData.Addr.SegmentId);
+    AssertRelease(pSource->AllocData.Addr.offVram != VBOXVIDEOOFFSET_VOID);
+    PhAddr.QuadPart = pSource->AllocData.Addr.offVram;
+
+    for (UINT i = ModifiedVidPnSourceId + 1; i < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
+    {
+        /* increaze the phaddr based on the previous source size info */
+        PhAddr.QuadPart += pSource->AllocData.SurfDesc.cbSize;
+        PhAddr.QuadPart = ROUND_TO_PAGES(PhAddr.QuadPart);
+        pSource = &pDevExt->aSources[i];
+        if (pSource->AllocData.Addr.offVram != PhAddr.QuadPart
+                || pSource->AllocData.Addr.SegmentId != 1)
+            pSource->bGhSynced = FALSE;
+        pSource->AllocData.Addr.SegmentId = 1;
+        pSource->AllocData.Addr.offVram = PhAddr.QuadPart;
+    }
+}
+#endif

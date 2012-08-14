@@ -132,6 +132,9 @@ static SUPINSTFILE const    g_aSupInstallFiles[] =
 //#ifdef VBOX_WITH_SHARED_FOLDERS
     {   kSupIFT_Dll,  kSupID_AppPrivArch,        true, "VBoxSharedFolders" SUPLIB_DLL_SUFF },
 //#endif
+//#ifdef VBOX_WITH_DRAG_AND_DROP
+    {   kSupIFT_Dll,  kSupID_AppPrivArch,        true, "VBoxDragAndDropSvc" SUPLIB_DLL_SUFF },
+//#endif
 //#ifdef VBOX_WITH_GUEST_PROPS
     {   kSupIFT_Dll,  kSupID_AppPrivArch,        true, "VBoxGuestPropSvc" SUPLIB_DLL_SUFF },
 //#endif
@@ -166,7 +169,7 @@ static SUPINSTFILE const    g_aSupInstallFiles[] =
 //#ifdef VBOX_WITH_HEADLESS
     {   kSupIFT_Exe,  kSupID_AppBin,             true, "VBoxHeadless" SUPLIB_EXE_SUFF },
     {   kSupIFT_Dll,  kSupID_AppPrivArch,        true, "VBoxHeadless" SUPLIB_DLL_SUFF },
-    {   kSupIFT_Dll,  kSupID_AppPrivArch,        true, "VBoxFFmpegFB" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppPrivArch,        true, "VBoxVideoRecFB" SUPLIB_DLL_SUFF },
 //#endif
 
 //#ifdef VBOX_WITH_QTGUI

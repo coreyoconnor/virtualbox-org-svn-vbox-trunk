@@ -112,12 +112,6 @@ DECLVBGL(int) VbglInit (VBGLIOPORT portVMMDev, struct VMMDevMemory *pVMMDevMemor
  */
 DECLVBGL(int) VbglInit (void);
 
-/**
- * Check whether the main VBoxGuest driver is loaded.  (The load order of guest
- * drivers is not guaranteed on all platforms.)
- */
-DECLVBGL(bool) VbglIsReady(void);
-
 # endif
 
 /**
@@ -684,9 +678,11 @@ VBGLR3DECL(int)     VbglR3DnDProcessNextMessage(CPVBGLR3DNDHGCMEVENT pEvent);
 
 VBGLR3DECL(int)     VbglR3DnDHGAcknowledgeOperation(uint32_t uAction);
 VBGLR3DECL(int)     VbglR3DnDHGRequestData(const char* pcszFormat);
+#  ifdef VBOX_WITH_DRAG_AND_DROP_GH
 VBGLR3DECL(int)     VbglR3DnDGHAcknowledgePending(uint32_t uDefAction, uint32_t uAllActions, const char* pcszFormat);
 VBGLR3DECL(int)     VbglR3DnDGHSendData(void *pvData, uint32_t cbData);
 VBGLR3DECL(int)     VbglR3DnDGHErrorEvent(int rcOp);
+#  endif /* VBOX_WITH_DRAG_AND_DROP_GH */
 /** @} */
 # endif /* VBOX_WITH_DRAG_AND_DROP */
 

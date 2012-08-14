@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2007 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,6 +30,7 @@
 
 #ifdef VBOX_WITH_VPX
 #include "EbmlWriter.h"
+#include "EncodeAndWrite.h"
 #include <stdarg.h>
 #include <string.h>
 #define VPX_CODEC_DISABLE_COMPAT 1
@@ -50,6 +51,9 @@
 # endif /* DEBUG not defined */
 #endif
 
+#ifdef VBOX_WITH_VPX
+PVIDEORECCONTEXT pVideoRecContext;
+#endif
 
 class FFmpegFB : VBOX_SCRIPTABLE_IMPL(IFramebuffer)
 {
@@ -102,12 +106,12 @@ public:
 public:
 private:
 #ifdef VBOX_WITH_VPX
-	EbmlGlobal ebml;
-	vpx_codec_ctx_t      mVpxCodec;
+    EbmlGlobal ebml;
+    vpx_codec_ctx_t      mVpxCodec;
     vpx_codec_enc_cfg_t  mVpxConfig;
-	FILE * mOutputFile;
-	unsigned long mDuration;
-	uint32_t  mFrameCount;
+    FILE * mOutputFile;
+    unsigned long mDuration;
+    uint32_t  mFrameCount;
 
 #else
     /** Pointer to ffmpeg's format information context */
@@ -117,7 +121,7 @@ private:
     /** Information for ffmpeg describing the current frame */
     AVFrame *mFrame;
 
-	HRESULT setup_library();
+    HRESULT setup_library();
     HRESULT setup_output_format();
     HRESULT list_formats();
 #endif

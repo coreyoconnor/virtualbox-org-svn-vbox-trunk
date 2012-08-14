@@ -82,14 +82,14 @@ static void vbglQueryDriverInfo (void)
 {
     int rc = VINF_SUCCESS;
 
-    rc = RTSemFastMutexRequest(g_vbgldata.mutexDriverInit);
+    rc = RTSemMutexRequest(g_vbgldata.mutexDriverInit, RT_INDEFINITE_WAIT);
     
     if (RT_FAILURE(rc))
         return;
 
     if (g_vbgldata.status == VbglStatusReady)
     {
-        RTSemFastMutexRelease(g_vbgldata.mutexDriverInit);
+        RTSemMutexRelease(g_vbgldata.mutexDriverInit);
         return;
     }
 
@@ -118,7 +118,7 @@ static void vbglQueryDriverInfo (void)
             vbglR0QueryHostVersion();
         }
     }
-    RTSemFastMutexRelease(g_vbgldata.mutexDriverInit);
+    RTSemMutexRelease(g_vbgldata.mutexDriverInit);
     dprintf (("vbglQueryDriverInfo rc = %d\n", rc));
 }
 #endif /* !VBGL_VBOXGUEST */
@@ -164,7 +164,10 @@ int vbglInitCommon (void)
         ;
     }
     else
+    {
         LogRel(("vbglInitCommon: VbglPhysHeapInit failed. rc=%Rrc\n", rc));
+        g_vbgldata.status = VbglStatusNotInitialized;
+    }
 
     dprintf(("vbglInitCommon: rc = %d\n", rc));
 
@@ -174,6 +177,7 @@ int vbglInitCommon (void)
 DECLVBGL(void) vbglTerminateCommon (void)
 {
     VbglPhysHeapTerminate ();
+    g_vbgldata.status = VbglStatusNotInitialized;
 
     return;
 }
@@ -241,7 +245,7 @@ DECLVBGL(int) VbglInit (void)
 
     if (RT_SUCCESS(rc))
     {
-        rc = RTSemFastMutexCreate(&g_vbgldata.mutexDriverInit);
+        rc = RTSemMutexCreate(&g_vbgldata.mutexDriverInit);
         if (RT_SUCCESS(rc))
         {
             /* Try to obtain VMMDev port via IOCTL to VBoxGuest main driver. */
@@ -253,8 +257,8 @@ DECLVBGL(int) VbglInit (void)
 
             if (RT_FAILURE(rc))
             {
-                RTSemFastMutexDestroy(g_vbgldata.mutexDriverInit);
-                g_vbgldata.mutexDriverInit = NIL_RTSEMFASTMUTEX;
+                RTSemMutexDestroy(g_vbgldata.mutexDriverInit);
+                g_vbgldata.mutexDriverInit = NIL_RTSEMMUTEX;
             }
         }
 
@@ -268,11 +272,6 @@ DECLVBGL(int) VbglInit (void)
     return rc;
 }
 
-DECLVBGL(bool) VbglIsReady(void)
-{
-    return(g_vbgldata.status == VbglStatusReady);
-}
-
 DECLVBGL(void) VbglTerminate (void)
 {
 # ifdef VBOX_WITH_HGCM
@@ -283,8 +282,8 @@ DECLVBGL(void) VbglTerminate (void)
      * close the driver only if it is opened */
     if (vbglDriverIsOpened(&g_vbgldata.driver))
         vbglDriverClose(&g_vbgldata.driver);
-    RTSemFastMutexDestroy(g_vbgldata.mutexDriverInit);
-    g_vbgldata.mutexDriverInit = NIL_RTSEMFASTMUTEX;
+    RTSemMutexDestroy(g_vbgldata.mutexDriverInit);
+    g_vbgldata.mutexDriverInit = NIL_RTSEMMUTEX;
 
     /* note: do vbglTerminateCommon as a last step since it zeroez up the g_vbgldata
      * conceptually, doing vbglTerminateCommon last is correct

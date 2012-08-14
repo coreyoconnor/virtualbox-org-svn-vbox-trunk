@@ -49,28 +49,26 @@
 #include <iprt/string.h>
 #include <iprt/system.h>
 #include <iprt/time.h>
-
+#include <iprt/ctype.h>
+#include <iprt/dir.h>
 
 #include <algorithm>
 #include <list>
 #include <string>
 #include <signal.h>
 
+#include "VBoxAutostart.h"
+
 using namespace com;
 
-/**
- * VM list entry.
- */
-typedef struct AUTOSTARTVM
-{
-    Bstr  strId;
-    ULONG uStartupDelay;
-} AUTOSTARTVM;
+#if defined(RT_OS_LINUX) || defined (RT_OS_SOLARIS) || defined(RT_OS_FREEBSD) || defined(RT_OS_DARWIN)
+# define VBOXAUTOSTART_DAEMONIZE
+#endif
 
-static ComPtr<IVirtualBoxClient> g_pVirtualBoxClient = NULL;
-static bool                      g_fVerbose    = false;
-static ComPtr<IVirtualBox>       g_pVirtualBox = NULL;
-static ComPtr<ISession>          g_pSession    = NULL;
+ComPtr<IVirtualBoxClient> g_pVirtualBoxClient = NULL;
+bool                      g_fVerbose    = false;
+ComPtr<IVirtualBox>       g_pVirtualBox = NULL;
+ComPtr<ISession>          g_pSession    = NULL;
 
 /** Logging parameters. */
 static uint32_t      g_cHistory = 10;                   /* Enable log rotation, 10 files. */
@@ -84,7 +82,7 @@ static bool          g_fDaemonize = false;
  * Command line arguments.
  */
 static const RTGETOPTDEF g_aOptions[] = {
-#if defined(RT_OS_LINUX) || defined (RT_OS_SOLARIS) || defined(RT_OS_FREEBSD)
+#ifdef VBOXAUTOSTART_DAEMONIZE
     { "--background",           'b',                                       RTGETOPT_REQ_NOTHING },
 #endif
     /** For displayHelp(). */
@@ -101,7 +99,7 @@ static const RTGETOPTDEF g_aOptions[] = {
 };
 
 
-static void serviceLog(const char *pszFormat, ...)
+DECLHIDDEN(void) serviceLog(const char *pszFormat, ...)
 {
     va_list args;
     va_start(args, pszFormat);
@@ -112,111 +110,6 @@ static void serviceLog(const char *pszFormat, ...)
     LogRel(("%s", psz));
 
     RTStrFree(psz);
-}
-
-#define serviceLogVerbose(a) if (g_fVerbose) { serviceLog a; }
-
-static DECLCALLBACK(bool) autostartVMCmp(const AUTOSTARTVM &vm1, const AUTOSTARTVM &vm2)
-{
-    return vm1.uStartupDelay <= vm2.uStartupDelay;
-}
-
-/**
- * Main routine for the autostart daemon.
- *
- * @returns exit status code.
- */
-static RTEXITCODE autostartMain(void)
-{
-    RTEXITCODE rcExit = RTEXITCODE_SUCCESS;
-    std::list<AUTOSTARTVM> listVM;
-
-    /*
-     * Build a list of all VMs we need to autostart first, apply the overrides
-     * from the configuration and start the VMs afterwards.
-     */
-    com::SafeIfaceArray<IMachine> machines;
-    HRESULT rc = g_pVirtualBox->COMGETTER(Machines)(ComSafeArrayAsOutParam(machines));
-    if (SUCCEEDED(rc))
-    {
-        /*
-         * Iterate through the collection
-         */
-        for (size_t i = 0; i < machines.size(); ++i)
-        {
-            if (machines[i])
-            {
-                BOOL fAccessible;
-                CHECK_ERROR_BREAK(machines[i], COMGETTER(Accessible)(&fAccessible));
-                if (!fAccessible)
-                    continue;
-
-                BOOL fAutostart;
-                CHECK_ERROR_BREAK(machines[i], COMGETTER(AutostartEnabled)(&fAutostart));
-                if (fAutostart)
-                {
-                    AUTOSTARTVM autostartVM;
-
-                    CHECK_ERROR_BREAK(machines[i], COMGETTER(Id)(autostartVM.strId.asOutParam()));
-                    CHECK_ERROR_BREAK(machines[i], COMGETTER(AutostartDelay)(&autostartVM.uStartupDelay));
-
-                    listVM.push_back(autostartVM);
-                }
-            }
-        }
-
-        if (   SUCCEEDED(rc)
-            && listVM.size())
-        {
-            /* Sort by startup delay and apply base override. */
-            listVM.sort(autostartVMCmp);
-
-            std::list<AUTOSTARTVM>::iterator it;
-            for (it = listVM.begin(); it != listVM.end(); it++)
-            {
-                ComPtr<IMachine> machine;
-                ComPtr<IProgress> progress;
-
-                CHECK_ERROR_BREAK(g_pVirtualBox, FindMachine((*it).strId.raw(),
-                                                             machine.asOutParam()));
-
-                CHECK_ERROR_BREAK(machine, LaunchVMProcess(g_pSession, Bstr("headless").raw(),
-                                                           Bstr("").raw(), progress.asOutParam()));
-                if (SUCCEEDED(rc) && !progress.isNull())
-                {
-                    RTPrintf("Waiting for VM \"%ls\" to power on...\n", (*it).strId.raw());
-                    CHECK_ERROR(progress, WaitForCompletion(-1));
-                    if (SUCCEEDED(rc))
-                    {
-                        BOOL completed = true;
-                        CHECK_ERROR(progress, COMGETTER(Completed)(&completed));
-                        if (SUCCEEDED(rc))
-                        {
-                            ASSERT(completed);
-
-                            LONG iRc;
-                            CHECK_ERROR(progress, COMGETTER(ResultCode)(&iRc));
-                            if (SUCCEEDED(rc))
-                            {
-                                if (FAILED(iRc))
-                                {
-                                    ProgressErrorInfo info(progress);
-                                    com::GluePrintErrorInfo(info);
-                                }
-                                else
-                                {
-                                    RTPrintf("VM \"%ls\" has been successfully started.\n", (*it).strId.raw());
-                                }
-                            }
-                        }
-                    }
-                }
-                g_pSession->UnlockMachine();
-            }
-        }
-    }
-
-    return rcExit;
 }
 
 static void displayHeader()
@@ -267,14 +160,11 @@ static void displayHelp(const char *pszImage)
                 pcszDescr = "Print this help message and exit.";
                 break;
 
-#if defined(RT_OS_LINUX) || defined (RT_OS_SOLARIS) || defined(RT_OS_FREEBSD)
+#ifdef VBOXAUTOSTART_DAEMONIZE
             case 'b':
                 pcszDescr = "Run in background (daemon mode).";
                 break;
 #endif
-            case 'P':
-                pcszDescr = "Name of the PID file which is created when the daemon was started.";
-                break;
 
             case 'F':
                 pcszDescr = "Name of file to write log to (no file).";
@@ -374,7 +264,7 @@ int main(int argc, char *argv[])
                 g_fVerbose = true;
                 break;
 
-#if defined(RT_OS_LINUX) || defined (RT_OS_SOLARIS) || defined(RT_OS_FREEBSD)
+#ifdef VBOXAUTOSTART_DAEMONIZE
             case 'b':
                 g_fDaemonize = true;
                 break;
@@ -420,14 +310,42 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (fStart == fStop)
+    if (!fStart && !fStop)
+    {
+        displayHelp(argv[0]);
+        return RTMsgErrorExit(RTEXITCODE_FAILURE, "Either --start or --stop must be present");
+    }
+    else if (fStart && fStop)
     {
         displayHelp(argv[0]);
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "--start or --stop are mutually exclusive");
     }
 
+    if (!pszConfigFile)
+    {
+        displayHelp(argv[0]);
+        return RTMsgErrorExit(RTEXITCODE_FAILURE, "--config <config file> is missing");
+    }
+
     if (!fQuiet)
         displayHeader();
+
+    bool fAllowed = false;
+    uint32_t uStartupDelay = 0;
+    rc = autostartParseConfig(pszConfigFile, &fAllowed, &uStartupDelay);
+    if (RT_FAILURE(rc))
+        return RTEXITCODE_FAILURE;
+
+    if (!fAllowed)
+        return RTMsgErrorExit(RTEXITCODE_FAILURE, "User is not allowed to autostart VMs");
+
+    /* Don't start if the VirtualBox settings directory does not exist. */
+    char szUserHomeDir[RTPATH_MAX];
+    rc = com::GetVBoxUserHomeDirectory(szUserHomeDir, sizeof(szUserHomeDir), false /* fCreateDir */);
+    if (RT_FAILURE(rc))
+        return RTMsgErrorExit(RTEXITCODE_FAILURE, "could not get base directory: %Rrc", rc);
+    else if (!RTDirExists(szUserHomeDir))
+        return RTEXITCODE_SUCCESS;
 
     /* create release logger, to stdout */
     char szError[RTPATH_MAX + 128];
@@ -440,7 +358,7 @@ int main(int argc, char *argv[])
     if (RT_FAILURE(rc))
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "failed to open release log (%s, %Rrc)", szError, rc);
 
-#if defined(RT_OS_LINUX) || defined (RT_OS_SOLARIS) || defined(RT_OS_FREEBSD)
+#ifdef VBOXAUTOSTART_DAEMONIZE
     if (g_fDaemonize)
     {
         /* prepare release logging */
@@ -508,7 +426,14 @@ int main(int argc, char *argv[])
     if (RT_FAILURE(rc))
         return RTEXITCODE_FAILURE;
 
-    RTEXITCODE rcExit = autostartMain();
+    RTEXITCODE rcExit;
+    if (fStart)
+        rcExit = autostartStartMain(uStartupDelay);
+    else
+    {
+        Assert(fStop);
+        rcExit = autostartStopMain(uStartupDelay);
+    }
 
     EventQueue::getMainEventQueue()->processEventQueue(0);
 

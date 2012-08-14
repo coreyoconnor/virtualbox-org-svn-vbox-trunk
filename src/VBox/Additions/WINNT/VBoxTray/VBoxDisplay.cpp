@@ -15,7 +15,6 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 #define _WIN32_WINNT 0x0500
-#include <windows.h>
 #include "VBoxTray.h"
 #include "VBoxHelpers.h"
 #include "VBoxSeamless.h"
@@ -25,10 +24,15 @@
 #include <iprt/assert.h>
 #include <malloc.h>
 #include <VBoxGuestInternal.h>
+#ifdef VBOX_WITH_WDDM
+#include <iprt/asm.h>
+#endif
 
 typedef struct _VBOXDISPLAYCONTEXT
 {
     const VBOXSERVICEENV *pEnv;
+
+    BOOL fAnyX;
 
     /* ChangeDisplaySettingsEx does not exist in NT. ResizeDisplayDevice uses the function. */
     LONG (WINAPI * pfnChangeDisplaySettingsEx)(LPCTSTR lpszDeviceName, LPDEVMODE lpDevMode, HWND hwnd, DWORD dwflags, LPVOID lParam);
@@ -40,19 +44,6 @@ typedef struct _VBOXDISPLAYCONTEXT
 static VBOXDISPLAYCONTEXT gCtx = {0};
 
 #ifdef VBOX_WITH_WDDM
-static bool vboxWddmReinitVideoModes(VBOXDISPLAYCONTEXT *pCtx)
-{
-    VBOXDISPIFESCAPE escape = {0};
-    escape.escapeCode = VBOXESC_REINITVIDEOMODES;
-    DWORD err = VBoxDispIfEscape(&pCtx->pEnv->dispIf, &escape, 0);
-    if (err != NO_ERROR)
-    {
-        Log((__FUNCTION__": VBoxDispIfEscape failed with err (%d)\n", err));
-        return false;
-    }
-    return true;
-}
-
 typedef enum
 {
     VBOXDISPLAY_DRIVER_TYPE_UNKNOWN = 0,
@@ -117,6 +108,14 @@ int VBoxDisplayInit(const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStart
         return VERR_NOT_IMPLEMENTED;
     }
 
+    VBOXDISPIFESCAPE_ISANYX IsAnyX = {0};
+    IsAnyX.EscapeHdr.escapeCode = VBOXESC_ISANYX;
+    DWORD err = VBoxDispIfEscapeInOut(&pEnv->dispIf, &IsAnyX.EscapeHdr, sizeof (uint32_t));
+    if (err == NO_ERROR)
+        gCtx.fAnyX = !!IsAnyX.u32IsAnyX;
+    else
+        gCtx.fAnyX = TRUE;
+
     Log(("VBoxTray: VBoxDisplayInit: Display init successful\n"));
 
     *pfStartThread = true;
@@ -172,7 +171,10 @@ static bool isVBoxDisplayDriverActive(VBOXDISPLAYCONTEXT *pCtx)
                     result = true;
 #else
                     enmType = VBOXDISPLAY_DRIVER_TYPE_XPDM;
-                else if (strcmp(&dispDevice.DeviceString[0], "VirtualBox Graphics Adapter (Microsoft Corporation - WDDM)") == 0)
+                /* WDDM driver can now have multiple incarnations,
+                 * if the driver name contains VirtualBox, and does NOT match the XPDM name,
+                 * assume it to be WDDM */
+                else if (strstr(&dispDevice.DeviceString[0], "VirtualBox"))
                     enmType = VBOXDISPLAY_DRIVER_TYPE_WDDM;
 #endif
                 break;
@@ -215,6 +217,9 @@ static BOOL ResizeDisplayDevice(ULONG Id, DWORD Width, DWORD Height, DWORD BitsP
                                         VBOXDISPLAYCONTEXT *pCtx)
 {
     BOOL fModeReset = (Width == 0 && Height == 0 && BitsPerPixel == 0);
+
+    if (!gCtx.fAnyX)
+        Width &= 0xFFF8;
 
     DISPLAY_DEVICE DisplayDevice;
 
@@ -416,7 +421,7 @@ static BOOL ResizeDisplayDevice(ULONG Id, DWORD Width, DWORD Height, DWORD BitsP
 
         }
 
-        DWORD err = VBoxDispIfResizeModes(&pCtx->pEnv->dispIf, paDisplayDevices, paDeviceModes, NumDevices);
+        DWORD err = VBoxDispIfResizeModes(&pCtx->pEnv->dispIf, Id, paDisplayDevices, paDeviceModes, NumDevices);
         if (err == NO_ERROR || err != ERROR_RETRY)
         {
             if (err == NO_ERROR)

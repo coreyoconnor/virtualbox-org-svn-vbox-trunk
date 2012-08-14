@@ -223,7 +223,7 @@ public:
 
     /* details generators */
 
-    QString details (const CMedium &aHD, bool aPredictDiff);
+    QString details (const CMedium &aHD, bool aPredictDiff, bool fUseHtml = true);
 
     QString details (const CUSBDevice &aDevice) const;
     QString toolTip (const CUSBDevice &aDevice) const;
@@ -238,10 +238,10 @@ public:
     bool showVirtualBoxLicense();
 #endif
 
-    CSession openSession(const QString &aId, bool aExisting = false);
+    CSession openSession(const QString &aId, KLockType aLockType = KLockType_Write);
 
     /** Shortcut to openSession (aId, true). */
-    CSession openExistingSession(const QString &aId) { return openSession (aId, true); }
+    CSession openExistingSession(const QString &aId) { return openSession(aId, KLockType_Shared); }
 
     void startEnumeratingMedia();
 
@@ -533,6 +533,9 @@ private:
 #ifdef VBOX_GUI_WITH_PIDFILE
     QString m_strPidfile;
 #endif
+
+    char mSettingsPw[256];
+    bool mSettingsPwSet;
 
     friend VBoxGlobal &vboxGlobal();
 };

@@ -41,15 +41,13 @@
 #define HWACCM_VMX_EMULATE_REALMODE
 
 
-#if 0
-/* Seeing somewhat random behaviour on my Nehalem system with auto-save of guest MSRs;
- * for some strange reason the CPU doesn't save the MSRs during the VM-exit.
- * Clearly visible with a dual VCPU configured OpenSolaris 200906 live cd VM.
+/* The MSR auto load/store does not work for KERNEL_GS_BASE MSR, thus we
+ * handle this MSR manually. See @bugref{6208}. This is clearly visible while
+ * booting Solaris 11 (11.1 b19) VMs with 2 Cpus.
  *
- * Note: change the assembly files when enabling this! (remove the manual auto load/save)
+ * Note: don't forget to update the assembly files while modifying this!
  */
 #define VBOX_WITH_AUTO_MSR_LOAD_RESTORE
-#endif
 
 RT_C_DECLS_BEGIN
 
@@ -148,16 +146,12 @@ typedef struct HMGLOBLCPUINFO
     uint32_t            uCurrentASID;
     /** TLB flush count. */
     uint32_t            cTLBFlushes;
-
     /** Whether to flush each new ASID/VPID before use. */
     bool                fFlushASIDBeforeUse;
-
     /** Configured for VT-x or AMD-V. */
     bool                fConfigured;
-
     /** Set if the VBOX_HWVIRTEX_IGNORE_SVM_IN_USE hack is active. */
     bool                fIgnoreAMDVInUseError;
-
     /** In use by our code. (for power suspend) */
     volatile bool       fInUse;
 } HMGLOBLCPUINFO;
@@ -571,6 +565,9 @@ typedef struct HWACCMCPU
 
     uint32_t                    u32Alignment;
 
+    /* Host's TSC_AUX MSR (used when RDTSCP doesn't cause VM-exits). */
+    uint64_t                    u64HostTSCAux;
+
     struct
     {
         /** Physical address of the VM control structure (VMCS). */
@@ -629,11 +626,11 @@ typedef struct HWACCMCPU
         RTR0MEMOBJ                  pMemObjHostMSR;
         /** Virtual address of the MSR load area (1 page). */
         R0PTRTYPE(uint8_t *)        pHostMSR;
-#endif /* VBOX_WITH_AUTO_MSR_LOAD_RESTORE */
 
-        /* Number of automatically loaded/restored MSRs. */
+        /* Number of automatically loaded/restored guest MSRs during the world switch. */
         uint32_t                    cCachedMSRs;
         uint32_t                    uAlignement;
+#endif /* VBOX_WITH_AUTO_MSR_LOAD_RESTORE */
 
         /* Last use TSC offset value. (cached) */
         uint64_t                    u64TSCOffset;
@@ -787,7 +784,7 @@ typedef struct HWACCMCPU
     STAMCOUNTER             StatExitGuestBP;
     STAMCOUNTER             StatExitGuestXF;
     STAMCOUNTER             StatExitGuestXcpUnk;
-    STAMCOUNTER             StatExitInvpg;
+    STAMCOUNTER             StatExitInvlpg;
     STAMCOUNTER             StatExitInvd;
     STAMCOUNTER             StatExitCpuid;
     STAMCOUNTER             StatExitRdtsc;

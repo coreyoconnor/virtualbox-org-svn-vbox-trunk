@@ -52,6 +52,7 @@ using namespace com;
 enum
 {
     MODIFYVM_NAME = 1000,
+    MODIFYVM_GROUPS,
     MODIFYVM_OSTYPE,
     MODIFYVM_MEMORY,
     MODIFYVM_PAGEFUSION,
@@ -138,6 +139,7 @@ enum
     MODIFYVM_AUDIOCONTROLLER,
     MODIFYVM_AUDIO,
     MODIFYVM_CLIPBOARD,
+    MODIFYVM_DRAGANDDROP,
     MODIFYVM_VRDPPORT,                /* VRDE: deprecated */
     MODIFYVM_VRDPADDRESS,             /* VRDE: deprecated */
     MODIFYVM_VRDPAUTHTYPE,            /* VRDE: deprecated */
@@ -195,6 +197,7 @@ enum
 static const RTGETOPTDEF g_aModifyVMOptions[] =
 {
     { "--name",                     MODIFYVM_NAME,                      RTGETOPT_REQ_STRING },
+    { "--groups",                   MODIFYVM_GROUPS,                    RTGETOPT_REQ_STRING },
     { "--ostype",                   MODIFYVM_OSTYPE,                    RTGETOPT_REQ_STRING },
     { "--memory",                   MODIFYVM_MEMORY,                    RTGETOPT_REQ_UINT32 },
     { "--pagefusion",               MODIFYVM_PAGEFUSION,                RTGETOPT_REQ_BOOL_ONOFF },
@@ -283,6 +286,7 @@ static const RTGETOPTDEF g_aModifyVMOptions[] =
     { "--audiocontroller",          MODIFYVM_AUDIOCONTROLLER,           RTGETOPT_REQ_STRING },
     { "--audio",                    MODIFYVM_AUDIO,                     RTGETOPT_REQ_STRING },
     { "--clipboard",                MODIFYVM_CLIPBOARD,                 RTGETOPT_REQ_STRING },
+    { "--draganddrop",              MODIFYVM_DRAGANDDROP,               RTGETOPT_REQ_STRING },
     { "--vrdpport",                 MODIFYVM_VRDPPORT,                  RTGETOPT_REQ_STRING },     /* deprecated */
     { "--vrdpaddress",              MODIFYVM_VRDPADDRESS,               RTGETOPT_REQ_STRING },     /* deprecated */
     { "--vrdpauthtype",             MODIFYVM_VRDPAUTHTYPE,              RTGETOPT_REQ_STRING },     /* deprecated */
@@ -363,6 +367,24 @@ static int32_t parsePci(const char* szPciAddr)
     return (aVals[0] << 8) | (aVals[1] << 3) | (aVals[2] << 0);
 }
 
+void parseGroups(const char *pcszGroups, com::SafeArray<BSTR> *pGroups)
+{
+    while (pcszGroups)
+    {
+        char *pComma = RTStrStr(pcszGroups, ",");
+        if (pComma)
+        {
+            Bstr(pcszGroups, pComma - pcszGroups).detachTo(pGroups->appendedRaw());
+            pcszGroups = pComma + 1;
+        }
+        else
+        {
+            Bstr(pcszGroups).detachTo(pGroups->appendedRaw());
+            pcszGroups = NULL;
+        }
+    }
+}
+
 int handleModifyVM(HandlerArg *a)
 {
     int c;
@@ -390,7 +412,7 @@ int handleModifyVM(HandlerArg *a)
     CHECK_ERROR_RET(machine, LockMachine(a->session, LockType_Write), 1);
 
     /* get the mutable session machine */
-    a->session->COMGETTER(Machine)(machine.asOutParam());
+    CHECK_ERROR_RET(a->session, COMGETTER(Machine)(machine.asOutParam()), 1);
     machine->COMGETTER(BIOSSettings)(biosSettings.asOutParam());
 
     RTGetOptInit(&GetOptState, a->argc, a->argv, g_aModifyVMOptions,
@@ -404,6 +426,13 @@ int handleModifyVM(HandlerArg *a)
             case MODIFYVM_NAME:
             {
                 CHECK_ERROR(machine, COMSETTER(Name)(Bstr(ValueUnion.psz).raw()));
+                break;
+            }
+            case MODIFYVM_GROUPS:
+            {
+                com::SafeArray<BSTR> groups;
+                parseGroups(ValueUnion.psz, &groups);
+                CHECK_ERROR(machine, COMSETTER(Groups)(ComSafeArrayAsInParam(groups)));
                 break;
             }
             case MODIFYVM_OSTYPE:
@@ -995,9 +1024,9 @@ int handleModifyVM(HandlerArg *a)
                 {
                     /* enable the controller */
                     if (!floppyAttachment)
-                        CHECK_ERROR(machine, AttachDevice(Bstr("Floppy Controller").raw(),
-                                                          0, 0,
-                                                          DeviceType_Floppy, NULL));
+                        CHECK_ERROR(machine, AttachDeviceWithoutMedium(Bstr("Floppy Controller").raw(),
+                                                                            0, 0,
+                                                                            DeviceType_Floppy));
 
                     /* unmount? */
                     if (    !strcmp(ValueUnion.psz, "none")
@@ -1365,31 +1394,31 @@ int handleModifyVM(HandlerArg *a)
             case MODIFYVM_NATNET:
             {
                 ComPtr<INetworkAdapter> nic;
-                ComPtr<INATEngine> driver;
+                ComPtr<INATEngine> engine;
 
                 CHECK_ERROR_BREAK(machine, GetNetworkAdapter(GetOptState.uIndex - 1, nic.asOutParam()));
                 ASSERT(nic);
 
-                CHECK_ERROR(nic, COMGETTER(NatDriver)(driver.asOutParam()));
+                CHECK_ERROR(nic, COMGETTER(NATEngine)(engine.asOutParam()));
 
                 const char *psz = ValueUnion.psz;
                 if (!strcmp("default", psz))
                     psz = "";
 
-                CHECK_ERROR(driver, COMSETTER(Network)(Bstr(psz).raw()));
+                CHECK_ERROR(engine, COMSETTER(Network)(Bstr(psz).raw()));
                 break;
             }
 
             case MODIFYVM_NATBINDIP:
             {
                 ComPtr<INetworkAdapter> nic;
-                ComPtr<INATEngine> driver;
+                ComPtr<INATEngine> engine;
 
                 CHECK_ERROR_BREAK(machine, GetNetworkAdapter(GetOptState.uIndex - 1, nic.asOutParam()));
                 ASSERT(nic);
 
-                CHECK_ERROR(nic, COMGETTER(NatDriver)(driver.asOutParam()));
-                CHECK_ERROR(driver, COMSETTER(HostIP)(Bstr(ValueUnion.psz).raw()));
+                CHECK_ERROR(nic, COMGETTER(NATEngine)(engine.asOutParam()));
+                CHECK_ERROR(engine, COMSETTER(HostIP)(Bstr(ValueUnion.psz).raw()));
                 break;
             }
 
@@ -1412,7 +1441,7 @@ int handleModifyVM(HandlerArg *a)
             case MODIFYVM_NATSETTINGS:
             {
                 ComPtr<INetworkAdapter> nic;
-                ComPtr<INATEngine> driver;
+                ComPtr<INATEngine> engine;
                 char *strMtu;
                 char *strSockSnd;
                 char *strSockRcv;
@@ -1433,8 +1462,8 @@ int handleModifyVM(HandlerArg *a)
                 CHECK_ERROR_BREAK(machine, GetNetworkAdapter(GetOptState.uIndex - 1, nic.asOutParam()));
                 ASSERT(nic);
 
-                CHECK_ERROR(nic, COMGETTER(NatDriver)(driver.asOutParam()));
-                CHECK_ERROR(driver, SetNetworkSettings(RTStrToUInt32(strMtu), RTStrToUInt32(strSockSnd), RTStrToUInt32(strSockRcv),
+                CHECK_ERROR(nic, COMGETTER(NATEngine)(engine.asOutParam()));
+                CHECK_ERROR(engine, SetNetworkSettings(RTStrToUInt32(strMtu), RTStrToUInt32(strSockSnd), RTStrToUInt32(strSockRcv),
                                     RTStrToUInt32(strTcpSnd), RTStrToUInt32(strTcpRcv)));
                 break;
             }
@@ -1443,12 +1472,12 @@ int handleModifyVM(HandlerArg *a)
             case MODIFYVM_NATPF:
             {
                 ComPtr<INetworkAdapter> nic;
-                ComPtr<INATEngine> driver;
+                ComPtr<INATEngine> engine;
 
                 CHECK_ERROR_BREAK(machine, GetNetworkAdapter(GetOptState.uIndex - 1, nic.asOutParam()));
                 ASSERT(nic);
 
-                CHECK_ERROR(nic, COMGETTER(NatDriver)(driver.asOutParam()));
+                CHECK_ERROR(nic, COMGETTER(NATEngine)(engine.asOutParam()));
                 /* format name:proto:hostip:hostport:guestip:guestport*/
                 if (RTStrCmp(ValueUnion.psz, "delete") != 0)
                 {
@@ -1482,7 +1511,7 @@ int handleModifyVM(HandlerArg *a)
                         rc = E_FAIL;
                         break;
                     }
-                    CHECK_ERROR(driver, AddRedirect(Bstr(strName).raw(), proto,
+                    CHECK_ERROR(engine, AddRedirect(Bstr(strName).raw(), proto,
                                         Bstr(strHostIp).raw(),
                                         RTStrToUInt16(strHostPort),
                                         Bstr(strGuestIp).raw(),
@@ -1495,7 +1524,7 @@ int handleModifyVM(HandlerArg *a)
                     vrc = RTGetOptFetchValue(&GetOptState, &ValueUnion, RTGETOPT_REQ_STRING);
                     if (RT_FAILURE(vrc))
                         return errorSyntax(USAGE_MODIFYVM, "Not enough parameters");
-                    CHECK_ERROR(driver, RemoveRedirect(Bstr(ValueUnion.psz).raw()));
+                    CHECK_ERROR(engine, RemoveRedirect(Bstr(ValueUnion.psz).raw()));
                 }
                 break;
             }
@@ -1503,13 +1532,13 @@ int handleModifyVM(HandlerArg *a)
             case MODIFYVM_NATALIASMODE:
             {
                 ComPtr<INetworkAdapter> nic;
-                ComPtr<INATEngine> driver;
+                ComPtr<INATEngine> engine;
                 uint32_t aliasMode = 0;
 
                 CHECK_ERROR_BREAK(machine, GetNetworkAdapter(GetOptState.uIndex - 1, nic.asOutParam()));
                 ASSERT(nic);
 
-                CHECK_ERROR(nic, COMGETTER(NatDriver)(driver.asOutParam()));
+                CHECK_ERROR(nic, COMGETTER(NATEngine)(engine.asOutParam()));
                 if (RTStrCmp(ValueUnion.psz,"default") == 0)
                 {
                     aliasMode = 0;
@@ -1531,84 +1560,84 @@ int handleModifyVM(HandlerArg *a)
                         token++;
                     }
                 }
-                CHECK_ERROR(driver, COMSETTER(AliasMode)(aliasMode));
+                CHECK_ERROR(engine, COMSETTER(AliasMode)(aliasMode));
                 break;
             }
 
             case MODIFYVM_NATTFTPPREFIX:
             {
                 ComPtr<INetworkAdapter> nic;
-                ComPtr<INATEngine> driver;
+                ComPtr<INATEngine> engine;
 
                 CHECK_ERROR_BREAK(machine, GetNetworkAdapter(GetOptState.uIndex - 1, nic.asOutParam()));
                 ASSERT(nic);
 
-                CHECK_ERROR(nic, COMGETTER(NatDriver)(driver.asOutParam()));
-                CHECK_ERROR(driver, COMSETTER(TftpPrefix)(Bstr(ValueUnion.psz).raw()));
+                CHECK_ERROR(nic, COMGETTER(NATEngine)(engine.asOutParam()));
+                CHECK_ERROR(engine, COMSETTER(TFTPPrefix)(Bstr(ValueUnion.psz).raw()));
                 break;
             }
 
             case MODIFYVM_NATTFTPFILE:
             {
                 ComPtr<INetworkAdapter> nic;
-                ComPtr<INATEngine> driver;
+                ComPtr<INATEngine> engine;
 
                 CHECK_ERROR_BREAK(machine, GetNetworkAdapter(GetOptState.uIndex - 1, nic.asOutParam()));
                 ASSERT(nic);
 
-                CHECK_ERROR(nic, COMGETTER(NatDriver)(driver.asOutParam()));
-                CHECK_ERROR(driver, COMSETTER(TftpBootFile)(Bstr(ValueUnion.psz).raw()));
+                CHECK_ERROR(nic, COMGETTER(NATEngine)(engine.asOutParam()));
+                CHECK_ERROR(engine, COMSETTER(TFTPBootFile)(Bstr(ValueUnion.psz).raw()));
                 break;
             }
 
             case MODIFYVM_NATTFTPSERVER:
             {
                 ComPtr<INetworkAdapter> nic;
-                ComPtr<INATEngine> driver;
+                ComPtr<INATEngine> engine;
 
                 CHECK_ERROR_BREAK(machine, GetNetworkAdapter(GetOptState.uIndex - 1, nic.asOutParam()));
                 ASSERT(nic);
 
-                CHECK_ERROR(nic, COMGETTER(NatDriver)(driver.asOutParam()));
-                CHECK_ERROR(driver, COMSETTER(TftpNextServer)(Bstr(ValueUnion.psz).raw()));
+                CHECK_ERROR(nic, COMGETTER(NATEngine)(engine.asOutParam()));
+                CHECK_ERROR(engine, COMSETTER(TFTPNextServer)(Bstr(ValueUnion.psz).raw()));
                 break;
             }
             case MODIFYVM_NATDNSPASSDOMAIN:
             {
                 ComPtr<INetworkAdapter> nic;
-                ComPtr<INATEngine> driver;
+                ComPtr<INATEngine> engine;
 
                 CHECK_ERROR_BREAK(machine, GetNetworkAdapter(GetOptState.uIndex - 1, nic.asOutParam()));
                 ASSERT(nic);
 
-                CHECK_ERROR(nic, COMGETTER(NatDriver)(driver.asOutParam()));
-                CHECK_ERROR(driver, COMSETTER(DnsPassDomain)(ValueUnion.f));
+                CHECK_ERROR(nic, COMGETTER(NATEngine)(engine.asOutParam()));
+                CHECK_ERROR(engine, COMSETTER(DNSPassDomain)(ValueUnion.f));
                 break;
             }
 
             case MODIFYVM_NATDNSPROXY:
             {
                 ComPtr<INetworkAdapter> nic;
-                ComPtr<INATEngine> driver;
+                ComPtr<INATEngine> engine;
 
                 CHECK_ERROR_BREAK(machine, GetNetworkAdapter(GetOptState.uIndex - 1, nic.asOutParam()));
                 ASSERT(nic);
 
-                CHECK_ERROR(nic, COMGETTER(NatDriver)(driver.asOutParam()));
-                CHECK_ERROR(driver, COMSETTER(DnsProxy)(ValueUnion.f));
+                CHECK_ERROR(nic, COMGETTER(NATEngine)(engine.asOutParam()));
+                CHECK_ERROR(engine, COMSETTER(DNSProxy)(ValueUnion.f));
                 break;
             }
 
             case MODIFYVM_NATDNSHOSTRESOLVER:
             {
                 ComPtr<INetworkAdapter> nic;
-                ComPtr<INATEngine> driver;
+                ComPtr<INATEngine> engine;
 
                 CHECK_ERROR_BREAK(machine, GetNetworkAdapter(GetOptState.uIndex - 1, nic.asOutParam()));
                 ASSERT(nic);
 
-                CHECK_ERROR(nic, COMGETTER(NatDriver)(driver.asOutParam()));
-                CHECK_ERROR(driver, COMSETTER(DnsUseHostResolver)(ValueUnion.f));
+                CHECK_ERROR(nic, COMGETTER(NATEngine)(engine.asOutParam()));
+                CHECK_ERROR(engine, COMSETTER(DNSUseHostResolver)(ValueUnion.f));
                 break;
             }
             case MODIFYVM_MACADDRESS:
@@ -1635,17 +1664,17 @@ int handleModifyVM(HandlerArg *a)
                 bool fEnableUsb = false;
                 if (!strcmp(ValueUnion.psz, "ps2"))
                 {
-                    CHECK_ERROR(machine, COMSETTER(PointingHidType)(PointingHidType_PS2Mouse));
+                    CHECK_ERROR(machine, COMSETTER(PointingHIDType)(PointingHIDType_PS2Mouse));
                 }
                 else if (!strcmp(ValueUnion.psz, "usb"))
                 {
-                    CHECK_ERROR(machine, COMSETTER(PointingHidType)(PointingHidType_USBMouse));
+                    CHECK_ERROR(machine, COMSETTER(PointingHIDType)(PointingHIDType_USBMouse));
                     if (SUCCEEDED(rc))
                         fEnableUsb = true;
                 }
                 else if (!strcmp(ValueUnion.psz, "usbtablet"))
                 {
-                    CHECK_ERROR(machine, COMSETTER(PointingHidType)(PointingHidType_USBTablet));
+                    CHECK_ERROR(machine, COMSETTER(PointingHIDType)(PointingHIDType_USBTablet));
                     if (SUCCEEDED(rc))
                         fEnableUsb = true;
                 }
@@ -1677,11 +1706,11 @@ int handleModifyVM(HandlerArg *a)
                 bool fEnableUsb = false;
                 if (!strcmp(ValueUnion.psz, "ps2"))
                 {
-                    CHECK_ERROR(machine, COMSETTER(KeyboardHidType)(KeyboardHidType_PS2Keyboard));
+                    CHECK_ERROR(machine, COMSETTER(KeyboardHIDType)(KeyboardHIDType_PS2Keyboard));
                 }
                 else if (!strcmp(ValueUnion.psz, "usb"))
                 {
-                    CHECK_ERROR(machine, COMSETTER(KeyboardHidType)(KeyboardHidType_USBKeyboard));
+                    CHECK_ERROR(machine, COMSETTER(KeyboardHIDType)(KeyboardHIDType_USBKeyboard));
                     if (SUCCEEDED(rc))
                         fEnableUsb = true;
                 }
@@ -1974,6 +2003,29 @@ int handleModifyVM(HandlerArg *a)
                 break;
             }
 
+            case MODIFYVM_DRAGANDDROP:
+            {
+                DragAndDropMode_T mode;
+                if (!strcmp(ValueUnion.psz, "disabled"))
+                    mode = DragAndDropMode_Disabled;
+                else if (!strcmp(ValueUnion.psz, "hosttoguest"))
+                    mode = DragAndDropMode_HostToGuest;
+                else if (!strcmp(ValueUnion.psz, "guesttohost"))
+                    mode = DragAndDropMode_GuestToHost;
+                else if (!strcmp(ValueUnion.psz, "bidirectional"))
+                    mode = DragAndDropMode_Bidirectional;
+                else
+                {
+                    errorArgument("Invalid --draganddrop argument '%s'", ValueUnion.psz);
+                    rc = E_FAIL;
+                }
+                if (SUCCEEDED(rc))
+                {
+                    CHECK_ERROR(machine, COMSETTER(DragAndDropMode)(mode));
+                }
+                break;
+            }
+
             case MODIFYVM_VRDE_EXTPACK:
             {
                 ComPtr<IVRDEServer> vrdeServer;
@@ -2176,7 +2228,7 @@ int handleModifyVM(HandlerArg *a)
                 ComPtr<IUSBController> UsbCtl;
                 CHECK_ERROR(machine, COMGETTER(USBController)(UsbCtl.asOutParam()));
                 if (SUCCEEDED(rc))
-                    CHECK_ERROR(UsbCtl, COMSETTER(EnabledEhci)(ValueUnion.f));
+                    CHECK_ERROR(UsbCtl, COMSETTER(EnabledEHCI)(ValueUnion.f));
                 break;
             }
 
@@ -2224,36 +2276,12 @@ int handleModifyVM(HandlerArg *a)
 
             case MODIFYVM_TELEPORTER_PASSWORD_FILE:
             {
-                size_t cbFile;
-                char szPasswd[512];
-                int vrc = VINF_SUCCESS;
-                bool fStdIn = !strcmp(ValueUnion.psz, "stdin");
-                PRTSTREAM pStrm;
-                if (!fStdIn)
-                    vrc = RTStrmOpen(ValueUnion.psz, "r", &pStrm);
+                Utf8Str password;
+                RTEXITCODE rcExit = readPasswordFile(ValueUnion.psz, &password);
+                if (rcExit != RTEXITCODE_SUCCESS)
+                    rc = E_FAIL;
                 else
-                    pStrm = g_pStdIn;
-                if (RT_SUCCESS(vrc))
-                {
-                    vrc = RTStrmReadEx(pStrm, szPasswd, sizeof(szPasswd)-1, &cbFile);
-                    if (RT_SUCCESS(vrc))
-                    {
-                        if (cbFile >= sizeof(szPasswd)-1)
-                            errorArgument("Provided password too long");
-                        else
-                        {
-                            unsigned i;
-                            for (i = 0; i < cbFile && !RT_C_IS_CNTRL(szPasswd[i]); i++)
-                                ;
-                            szPasswd[i] = '\0';
-                            CHECK_ERROR(machine, COMSETTER(TeleporterPassword)(Bstr(szPasswd).raw()));
-                        }
-                    }
-                    if (!fStdIn)
-                        RTStrmClose(pStrm);
-                }
-                else
-                    errorArgument("Cannot open password file '%s' (%Rrc)", ValueUnion.psz, vrc);
+                    CHECK_ERROR(machine, COMSETTER(TeleporterPassword)(Bstr(password).raw()));
                 break;
             }
 
@@ -2326,19 +2354,19 @@ int handleModifyVM(HandlerArg *a)
 
             case MODIFYVM_HPET:
             {
-                CHECK_ERROR(machine, COMSETTER(HpetEnabled)(ValueUnion.f));
+                CHECK_ERROR(machine, COMSETTER(HPETEnabled)(ValueUnion.f));
                 break;
             }
 
             case MODIFYVM_IOCACHE:
             {
-                CHECK_ERROR(machine, COMSETTER(IoCacheEnabled)(ValueUnion.f));
+                CHECK_ERROR(machine, COMSETTER(IOCacheEnabled)(ValueUnion.f));
                 break;
             }
 
             case MODIFYVM_IOCACHESIZE:
             {
-                CHECK_ERROR(machine, COMSETTER(IoCacheSize)(ValueUnion.u32));
+                CHECK_ERROR(machine, COMSETTER(IOCacheSize)(ValueUnion.u32));
                 break;
             }
 
@@ -2416,7 +2444,7 @@ int handleModifyVM(HandlerArg *a)
                 }
                 else
                 {
-                    CHECK_ERROR(machine, AttachHostPciDevice(iHostAddr, iGuestAddr, TRUE));
+                    CHECK_ERROR(machine, AttachHostPCIDevice(iHostAddr, iGuestAddr, TRUE));
                 }
 
                 break;
@@ -2433,7 +2461,7 @@ int handleModifyVM(HandlerArg *a)
                 }
                 else
                 {
-                    CHECK_ERROR(machine, DetachHostPciDevice(iHostAddr));
+                    CHECK_ERROR(machine, DetachHostPCIDevice(iHostAddr));
                 }
 
                 break;

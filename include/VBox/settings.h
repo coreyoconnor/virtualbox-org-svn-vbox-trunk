@@ -17,7 +17,7 @@
  */
 
 /*
- * Copyright (C) 2007-2011 Oracle Corporation
+ * Copyright (C) 2007-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -99,6 +99,7 @@ struct USBDeviceFilter
 };
 
 typedef std::map<com::Utf8Str, com::Utf8Str> StringsMap;
+typedef std::list<com::Utf8Str> StringsList;
 
 // ExtraDataItem (used by both VirtualBox.xml and machines XML)
 struct USBDeviceFilter;
@@ -230,6 +231,7 @@ struct SystemProperties
     com::Utf8Str            strVRDEAuthLibrary;
     com::Utf8Str            strWebServiceAuthLibrary;
     com::Utf8Str            strDefaultVRDEExtPack;
+    com::Utf8Str            strAutostartDatabasePath;
     uint32_t                ulLogHistoryCount;
 };
 
@@ -391,9 +393,9 @@ struct USBController
            u32SockSnd(0),
            u32TcpRcv(0),
            u32TcpSnd(0),
-           fDnsPassDomain(true), /* historically this value is true */
-           fDnsProxy(false),
-           fDnsUseHostResolver(false),
+           fDNSPassDomain(true), /* historically this value is true */
+           fDNSProxy(false),
+           fDNSUseHostResolver(false),
            fAliasLog(false),
            fAliasProxyOnly(false),
            fAliasUseSamePorts(false)
@@ -408,12 +410,12 @@ struct USBController
              && u32SockSnd          == n.u32SockSnd
              && u32TcpSnd           == n.u32TcpSnd
              && u32TcpRcv           == n.u32TcpRcv
-             && strTftpPrefix       == n.strTftpPrefix
-             && strTftpBootFile     == n.strTftpBootFile
-             && strTftpNextServer   == n.strTftpNextServer
-             && fDnsPassDomain      == n.fDnsPassDomain
-             && fDnsProxy           == n.fDnsProxy
-             && fDnsUseHostResolver == n.fDnsUseHostResolver
+             && strTFTPPrefix       == n.strTFTPPrefix
+             && strTFTPBootFile     == n.strTFTPBootFile
+             && strTFTPNextServer   == n.strTFTPNextServer
+             && fDNSPassDomain      == n.fDNSPassDomain
+             && fDNSProxy           == n.fDNSProxy
+             && fDNSUseHostResolver == n.fDNSUseHostResolver
              && fAliasLog           == n.fAliasLog
              && fAliasProxyOnly     == n.fAliasProxyOnly
              && fAliasUseSamePorts  == n.fAliasUseSamePorts
@@ -427,12 +429,12 @@ struct USBController
      uint32_t                u32SockSnd;
      uint32_t                u32TcpRcv;
      uint32_t                u32TcpSnd;
-     com::Utf8Str            strTftpPrefix;
-     com::Utf8Str            strTftpBootFile;
-     com::Utf8Str            strTftpNextServer;
-     bool                    fDnsPassDomain;
-     bool                    fDnsProxy;
-     bool                    fDnsUseHostResolver;
+     com::Utf8Str            strTFTPPrefix;
+     com::Utf8Str            strTFTPBootFile;
+     com::Utf8Str            strTFTPNextServer;
+     bool                    fDNSPassDomain;
+     bool                    fDNSProxy;
+     bool                    fDNSUseHostResolver;
      bool                    fAliasLog;
      bool                    fAliasProxyOnly;
      bool                    fAliasUseSamePorts;
@@ -691,19 +693,19 @@ typedef std::list<BandwidthGroup> BandwidthGroupList;
  * the operator== which is used by MachineConfigFile::operator==(), or otherwise
  * your settings might never get saved.
  */
-struct IoSettings
+struct IOSettings
 {
-    IoSettings();
+    IOSettings();
 
-    bool operator==(const IoSettings &i) const
+    bool operator==(const IOSettings &i) const
     {
-        return (   (fIoCacheEnabled   == i.fIoCacheEnabled)
-                && (ulIoCacheSize     == i.ulIoCacheSize)
+        return (   (fIOCacheEnabled   == i.fIOCacheEnabled)
+                && (ulIOCacheSize     == i.ulIOCacheSize)
                 && (llBandwidthGroups == i.llBandwidthGroups));
     }
 
-    bool               fIoCacheEnabled;
-    uint32_t           ulIoCacheSize;
+    bool               fIOCacheEnabled;
+    uint32_t           ulIOCacheSize;
     BandwidthGroupList llBandwidthGroups;
 };
 
@@ -712,14 +714,14 @@ struct IoSettings
  * the operator== which is used by MachineConfigFile::operator==(), or otherwise
  * your settings might never get saved.
  */
-struct HostPciDeviceAttachment
+struct HostPCIDeviceAttachment
 {
-    HostPciDeviceAttachment()
+    HostPCIDeviceAttachment()
         : uHostAddress(0),
           uGuestAddress(0)
     {}
 
-    bool operator==(const HostPciDeviceAttachment &a) const
+    bool operator==(const HostPCIDeviceAttachment &a) const
     {
         return (   (uHostAddress   == a.uHostAddress)
                 && (uGuestAddress  == a.uGuestAddress)
@@ -731,7 +733,7 @@ struct HostPciDeviceAttachment
     uint32_t        uHostAddress;
     uint32_t        uGuestAddress;
 };
-typedef std::list<HostPciDeviceAttachment> HostPciDeviceAttachmentList;
+typedef std::list<HostPCIDeviceAttachment> HostPCIDeviceAttachmentList;
 
 /**
  * Representation of Machine hardware; this is used in the MachineConfigFile.hardwareMachine
@@ -761,7 +763,7 @@ struct Hardware
     uint32_t            cCPUs;
     bool                fCpuHotPlug;            // requires settings version 1.10 (VirtualBox 3.2)
     CpuList             llCpus;                 // requires settings version 1.10 (VirtualBox 3.2)
-    bool                fHpetEnabled;           // requires settings version 1.10 (VirtualBox 3.2)
+    bool                fHPETEnabled;           // requires settings version 1.10 (VirtualBox 3.2)
     uint32_t            ulCpuExecutionCap;      // requires settings version 1.11 (VirtualBox 3.3)
 
     CpuIdLeafsList      llCpuIdLeafs;
@@ -776,8 +778,8 @@ struct Hardware
                         fAccelerate2DVideo;     // requires settings version 1.8 (VirtualBox 3.1)
     FirmwareType_T      firmwareType;           // requires settings version 1.9 (VirtualBox 3.1)
 
-    PointingHidType_T   pointingHidType;        // requires settings version 1.10 (VirtualBox 3.2)
-    KeyboardHidType_T   keyboardHidType;        // requires settings version 1.10 (VirtualBox 3.2)
+    PointingHIDType_T   pointingHIDType;        // requires settings version 1.10 (VirtualBox 3.2)
+    KeyboardHIDType_T   keyboardHIDType;        // requires settings version 1.10 (VirtualBox 3.2)
 
     ChipsetType_T       chipsetType;            // requires settings version 1.11 (VirtualBox 4.0)
 
@@ -796,6 +798,7 @@ struct Hardware
     // clever reason <Hardware> is where they are in the XML....
     SharedFoldersList   llSharedFolders;
     ClipboardMode_T     clipboardMode;
+    DragAndDropMode_T   dragAndDropMode;
 
     uint32_t            ulMemoryBalloonSize;
     bool                fPageFusionEnabled;
@@ -803,8 +806,8 @@ struct Hardware
     GuestPropertiesList llGuestProperties;
     com::Utf8Str        strNotificationPatterns;
 
-    IoSettings          ioSettings;             // requires settings version 1.10 (VirtualBox 3.2)
-    HostPciDeviceAttachmentList pciAttachments; // requires settings version 1.12 (VirtualBox 4.1)
+    IOSettings          ioSettings;             // requires settings version 1.10 (VirtualBox 3.2)
+    HostPCIDeviceAttachmentList pciAttachments; // requires settings version 1.12 (VirtualBox 4.1)
 };
 
 /**
@@ -1014,13 +1017,16 @@ struct MachineUserData
           uFaultTolerancePort(0),
           uFaultToleranceInterval(0),
           fRTCUseUTC(false)
-    { }
+    {
+        llGroups.push_back("/");
+    }
 
     bool operator==(const MachineUserData &c) const
     {
         return    (strName                    == c.strName)
                && (fNameSync                  == c.fNameSync)
                && (strDescription             == c.strDescription)
+               && (llGroups                   == c.llGroups)
                && (strOsType                  == c.strOsType)
                && (strSnapshotFolder          == c.strSnapshotFolder)
                && (fTeleporterEnabled         == c.fTeleporterEnabled)
@@ -1038,6 +1044,7 @@ struct MachineUserData
     com::Utf8Str            strName;
     bool                    fNameSync;
     com::Utf8Str            strDescription;
+    StringsList             llGroups;
     com::Utf8Str            strOsType;
     com::Utf8Str            strSnapshotFolder;
     bool                    fTeleporterEnabled;
@@ -1126,6 +1133,7 @@ private:
     void readTeleporter(const xml::ElementNode *pElmTeleporter, MachineUserData *pUserData);
     void readDebugging(const xml::ElementNode *pElmDbg, Debugging *pDbg);
     void readAutostart(const xml::ElementNode *pElmAutostart, Autostart *pAutostart);
+    void readGroups(const xml::ElementNode *elmGroups, StringsList *pllGroups);
     void readSnapshot(const xml::ElementNode &elmSnapshot, Snapshot &snap);
     void convertOldOSType_pre1_5(com::Utf8Str &str);
     void readMachine(const xml::ElementNode &elmMachine);
@@ -1138,6 +1146,7 @@ private:
                                     std::list<xml::ElementNode*> *pllElementsWithUuidAttributes);
     void buildDebuggingXML(xml::ElementNode *pElmParent, const Debugging *pDbg);
     void buildAutostartXML(xml::ElementNode *pElmParent, const Autostart *pAutostart);
+    void buildGroupsXML(xml::ElementNode *pElmParent, const StringsList *pllGroups);
     void buildSnapshotXML(xml::ElementNode &elmParent, const Snapshot &snap);
 
     void bumpSettingsVersionIfNeeded();
